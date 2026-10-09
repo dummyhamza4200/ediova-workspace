@@ -274,10 +274,12 @@ export default function App() {
     let active = true;
     const refreshPerformance = async () => {
       const [scores, monthly] = await Promise.all([
-        supabase!.from('manager_performance').select('*').order('performance_score', { ascending: true }),
-        supabase!.from('manager_monthly_performance').select('*').eq('month_start', performanceMonth + '-01').order('manager_name'),
+        supabase!.rpc('get_manager_performance'),
+        supabase!.rpc('get_manager_monthly_performance', { p_month: performanceMonth + '-01' }),
       ]);
-      if (active && !scores.error && scores.data) setPerformanceRows(scores.data as PerformanceRow[]);
+      if (active && !scores.error && scores.data) {
+        setPerformanceRows([...(scores.data as PerformanceRow[])].sort((a, b) => a.performance_score - b.performance_score));
+      }
       if (active && !monthly.error && monthly.data) setMonthlyPerformanceRows(monthly.data as MonthlyPerformanceRow[]);
     };
     void refreshPerformance();
