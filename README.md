@@ -1,90 +1,87 @@
-# Ediova Workspace
+# Ediova Inc. — Workspace
 
-Ediova's website and two-role team task workspace. Built with React, TypeScript, Vite and Supabase.
+A React, TypeScript and Vite website for Ediova Inc., with an authenticated task workspace powered by Supabase.
 
-## What's in this repository
+## What's included
 
-- Public-facing landing page with animated creative project cards, Careers contact link and team login.
-- Exactly two access roles: **01 Manager** and **02 Managing Director**.
-- Manager workspace: released assigned tasks, deadlines and overdue states, links, comments, calendar, completed history and a flippable profile card for Umna Haroon.
-- Director workspace: create, schedule, edit and assign tasks, set priorities and deadlines, review task status, comments and calendar.
-- Default timezone: **Asia/Karachi (UTC+05:00)**.
-- Supabase schema and row-level security policies for shared task persistence.
-- GitHub Actions build workflow, production artifact upload, and optional deployment via GitHub Pages.
+- Green-gradient Ediova logo and blended green/lime palette with a small orange accent.
+- Animated landing page and a 2-second logo transition when entering login.
+- No role picker on login. Supabase assigns role access from the signed-in profile.
+- Login inputs are not saved by the app; browser autofill is discouraged.
+- Manager and Managing Director task views, a clean deadline-first dashboard, task-detail popup, comments, resources and calendar.
+- Recurring tasks: daily, weekly, and monthly on selected calendar dates, with one or two dates each month.
+- Completed work is moved out of active tasks. The Director can reopen completed tasks.
+- A seven-person team directory popup.
+- A company-notice tool for the Managing Director; the latest active notice appears at the top of dashboards.
+- Manager performance scoring: every full 24 hours a task is late deducts 10 points from the score (minimum 0). Scores are recalculated from live task data.
+- Asia/Karachi (UTC+05:00) display and scheduling.
+- Supabase row-level security, a recurring-task generator scheduled hourly, security headers, organization metadata, robots.txt and sitemap.xml.
 
-The official Ediova logo was not provided in this connected context. The SVG mark and coral / ink / lilac / sage palette are **provisional**; replace and tune them against the official brand asset before launch.
+## Team directory
+
+1. Hamza Mubarak — Managing Director — Yogyakarta, Indonesia
+2. Humna Haroon — Manager — Islamabad, Pakistan
+3. Syed Shaheer — Senior Video Editor — Faisalabad, Pakistan
+4. Muhammad Hammad — Anime Expert — Aceh, Indonesia
+5. Ahmer Munir — Truvision Studio — Hafizabad, Pakistan
+6. Ahmer Khan — Junior Video Editor — Karachi, Pakistan
+7. Salman Asghar — Journal Writing — Sialkot, Pakistan
+
+The first two people are linked to the existing Supabase Auth profiles. The other five are directory entries only; create Auth accounts and provision roles separately before allowing them to sign in.
 
 ## Run locally
 
 Requires Node.js 22 or newer.
 
-```bash
+~~~bash
 npm install
+cp .env.example .env.local
 npm run dev
-```
+~~~
 
-Without Supabase environment variables the site opens in **Preview mode** with sample tasks. Preview changes persist only in the current browser and are **not shared** with another user or device. Use this mode for interface evaluation, not real task management.
+The site has a public Supabase project URL and publishable key configured as defaults in src/lib/supabase.ts; local environment variables can override them. Preview/demo fallback is intended only for reviewing the UI and is not shared between users.
 
-## Configure real authentication and shared tasks
+## CAPTCHA / bot protection
 
-1. Create or select a Supabase project.
-2. In Supabase SQL Editor, run `supabase/migrations/202610090001_initial_schema.sql`.
-3. In Supabase Authentication, create/invite one account for Umna Haroon (Manager) and one for the Managing Director. Disable public sign-up.
-4. Copy each account's real Auth user UUID.
-5. As a trusted administrator in SQL Editor, provision their profile rows with those UUIDs (replace both placeholders first):
+The login supports Cloudflare Turnstile, a low-friction CAPTCHA option supported by Supabase Auth. Supabase Auth does not natively configure Google reCAPTCHA in the same way; do not substitute a decorative checkbox for real server-verified CAPTCHA.
 
-```sql
-insert into public.profiles (id, full_name, role, location, experience)
-values
-  ('REPLACE_WITH_UMNA_AUTH_UUID', 'Umna Haroon', 'manager', 'Islamabad, Pakistan', '2+ years'),
-  ('REPLACE_WITH_DIRECTOR_AUTH_UUID', 'Managing Director', 'managing_director', null, null);
-```
+To activate it:
+1. Create a Turnstile widget in Cloudflare for the published site hostname.
+2. In Supabase Dashboard → Authentication → Protection / Bot and Abuse Protection, enable CAPTCHA, choose Cloudflare Turnstile, and enter the widget's secret key.
+3. In GitHub repository Settings → Secrets and variables → Actions → Variables, add VITE_TURNSTILE_SITE_KEY with the widget's public site key. The deployment workflow passes that public key to Vite.
+4. For local testing, add VITE_TURNSTILE_SITE_KEY to .env.local. The secret key belongs only in Supabase's dashboard—not in this repository or any VITE_* variable.
 
-If a profile row already exists, update it rather than inserting a duplicate. The role must be granted by a trusted administrator, never by the browser user.
+Until both the provider secret in Supabase and the public site key for the frontend are configured, the CAPTCHA is not active. Sign-in remains protected by Supabase authentication and row-level permissions, but bot protection is not complete.
 
-6. In the local environment, copy `.env.example` to `.env.local` and enter your project's URL and public anon/publishable key.
-7. For a hosted build, add the public Supabase URL and anon/publishable key as the hosting provider's environment variables. For GitHub Actions, use repository **Actions secrets** named `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
-8. Test both accounts. Confirm Managers cannot read tasks before release, edit task content or deadlines, assign work, or access Director functions. Confirm updates and comments persist across devices.
+## Existing Supabase project
 
-**Never** place a Supabase service-role key in frontend code or any `VITE_*` variable. Browser environment values are public; database row-level security is the authorization boundary.
+The app connects to the existing Supabase project used for Ediova. The database migrations already applied to that project include:
+- Row-level task access, including manager release-time restrictions.
+- The recurrence fields and hourly generator.
+- Team directory and notices tables.
+- Manager performance view.
+- Tightened task-level comment/history policies.
 
-## Build and type-check
+Do not apply the older starter migration in supabase/migrations/202610090001_initial_schema.sql to the current database as a new schema; it predates the live schema. Use Supabase's recorded migrations and the live schema as the source of truth.
 
-```bash
-npm run typecheck
-npm run build
-npm run preview
-```
+## Production verification
 
-## Deploy to Vercel
+The current database contains the two authenticated profiles. Before relying on the workspace for operations, sign in separately with each real account in the browser and verify:
+- The manager can see assigned released work only, complete tasks, add comments and open completed work.
+- The director can create, edit, schedule, repeat, reopen and assign tasks, view performance, send a notice and archive it.
+- A monthly task configured for two dates generates two future occurrences per month at the configured release time.
+- The Manager's performance score drops by 10 points for every full day late per task and never falls below 0.
 
-A `vercel.json` configuration is included for the Vite SPA build and basic security headers.
+Never publish a Supabase service-role key. Frontend Supabase keys are public; the database's RLS rules are the authorization boundary.
 
-1. In Vercel, import this Git repository as a new project.
-2. Keep the framework preset as Vite (the configuration also sets the build command and `dist` output directory).
-3. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under **Project Settings → Environment Variables** for Preview and Production.
-4. Deploy. Confirm the landing page, login screen and authenticated views load correctly.
-5. Do not publish real task information until the Supabase migration, accounts and RLS checks are completed.
+## Deployment
 
-Vercel account/team authorization is required to create a deployment; repository code alone cannot activate a Vercel project.
+The default public site is GitHub Pages:
+https://dummyhamza4200.github.io/ediova-workspace/
 
-## GitHub Actions and Pages
+GitHub Actions runs npm run build (type-check + Vite build) and deploys the dist output. The Vercel Git connection is not configured by this repository; it must be linked from a correctly authorized Vercel account if Vercel is preferred.
 
-Every push to `main` runs TypeScript checking and the production build. A `ediova-workspace-dist` artifact is retained for inspection/download.
-
-To publish with GitHub Pages:
-
-1. Open **Settings → Pages** and enable **GitHub Actions** as the source.
-2. Add the two Supabase Actions secrets only after configuring Supabase.
-3. Add a repository Actions **variable** named `ENABLE_GITHUB_PAGES` with value `true`.
-
-The GitHub connection available for editing files does not have permission to enable the Pages site through GitHub's Pages settings API. That one-time setting must be completed in the repository UI. Check **Settings → General** to confirm the repository's intended visibility; changing visibility requires an explicit owner decision.
-
-## Production checklist
-
-- Replace the provisional logo and verify all colors against Ediova's official brand asset.
-- Apply the SQL migration and create the two real Auth accounts.
-- Validate RLS and schedule/deadline behavior for both roles in Asia/Karachi time.
-- Configure a trusted backup and retention plan, and review monitoring.
-- Replace draft privacy and company-policy copy with language matching actual business practices.
-- Do not put client secrets or sensitive client data into task descriptions/comments unless the chosen hosting and retention policy explicitly supports it.
+Ediova Inc.
+Jl. Kaluirang 14,5
+Yogyakarta, Indonesia 55584
+Tel: +62 (813) 77012611
