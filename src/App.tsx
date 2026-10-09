@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronLeft, ChevronRight,
   Clock3, ExternalLink, FileText, LayoutDashboard, Link as LinkIcon, LockKeyhole, LogOut,
@@ -38,9 +38,6 @@ const TEAM_FALLBACK: TeamMember[] = [
   { id: 'ahmer-khan', full_name: 'Ahmer Khan', job_title: 'Junior Video Editor', location: 'Karachi, Pakistan', sort_order: 6 },
   { id: 'salman-asghar', full_name: 'Salman Asghar', job_title: 'Journal Writing', location: 'Sialkot, Pakistan', sort_order: 7 },
 ];
-const turnstileSiteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) || '';
-type TurnstileApi = { render: (container: HTMLElement, options: Record<string, unknown>) => string; remove: (id: string) => void };
-declare global { interface Window { turnstile?: TurnstileApi } }
 const TASK_KEY = 'ediova-workspace-demo-tasks-v1';
 const COMMENT_KEY = 'ediova-workspace-demo-comments-v1';
 const hour = (n: number) => new Date(Date.now() + n * 3600000).toISOString();
@@ -141,8 +138,6 @@ export default function App() {
   const [noticeTitleDraft, setNoticeTitleDraft] = useState('');
   const [noticeBodyDraft, setNoticeBodyDraft] = useState('');
   const [performanceRows, setPerformanceRows] = useState<PerformanceRow[]>([]);
-  const [captchaToken, setCaptchaToken] = useState('');
-  const captchaHost = useRef<HTMLDivElement | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [team, setTeam] = useState<Profile[]>([]);
@@ -170,7 +165,7 @@ export default function App() {
   function notify(message: string) { setNotice(message); window.setTimeout(() => setNotice(''), 3600); }
   function beginLoginTransition() {
     if (logoTransition) return;
-    setLoginEmail(''); setLoginPassword(''); setCaptchaToken('');
+    setLoginEmail(''); setLoginPassword('');
     setLogoTransition(true);
     window.setTimeout(() => {
       setScreen('login');
@@ -238,39 +233,6 @@ export default function App() {
     const timer = window.setInterval(() => void refreshPerformance(), 60000);
     return () => { active = false; window.clearInterval(timer); };
   }, [session, view]);
-  useEffect(() => {
-    if (screen !== 'login' || !turnstileSiteKey || !captchaHost.current) return;
-    const host = captchaHost.current;
-    let widgetId: string | null = null;
-    let script: HTMLScriptElement | null = null;
-    const render = () => {
-      if (!window.turnstile || !host || widgetId) return;
-      widgetId = window.turnstile.render(host, {
-        sitekey: turnstileSiteKey,
-        theme: 'light',
-        size: 'flexible',
-        callback: (token: string) => setCaptchaToken(token),
-        'expired-callback': () => setCaptchaToken(''),
-        'error-callback': () => setCaptchaToken(''),
-      });
-    };
-    render();
-    if (!window.turnstile) {
-      script = document.querySelector('script[data-ediova-turnstile]') as HTMLScriptElement | null;
-      if (!script) {
-        script = document.createElement('script');
-        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-        script.async = true; script.defer = true; script.dataset.ediovaTurnstile = 'true';
-        document.head.appendChild(script);
-      }
-      script.addEventListener('load', render);
-    }
-    return () => {
-      if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
-      setCaptchaToken('');
-      if (script) script.removeEventListener('load', render);
-    };
-  }, [screen]);
   const released = useMemo(() => tasks.filter(t => director || new Date(t.scheduled_at).getTime() <= Date.now()), [tasks, director]);
   const active = released.filter(t => t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'archived');
   const overdue = active.filter(t => effectiveStatus(t) === 'overdue');
@@ -296,9 +258,8 @@ export default function App() {
 
   async function submitLogin(event: FormEvent) {
     event.preventDefault();
-    if (turnstileSiteKey && !captchaToken) { notify('Please complete the quick human verification.'); return; }
     if (!isSupabaseConfigured || !supabase) {
-      setLoginEmail(''); setLoginPassword(''); setCaptchaToken('');
+      setLoginEmail(''); setLoginPassword('');
       setProfile(managerDemo);
       setScreen('workspace'); notify('Preview mode — changes stay in this browser only.'); return;
     }
@@ -308,15 +269,13 @@ export default function App() {
     setLoading(true);
     const { data, error } = await supabase.auth.signInWithPassword({
       email, password,
-      ...(captchaToken ? { options: { captchaToken } } : {}),
     });
-    setCaptchaToken('');
     if (error || !data.session) { notify(error?.message || 'Login failed.'); setLoading(false); return; }
     await openSession(data.session);
   }
   async function logout() {
     if (supabase && session) await supabase.auth.signOut();
-    setProfile(null); setSession(null); setActiveTaskId(null); setLoginEmail(''); setLoginPassword(''); setCaptchaToken(''); setScreen('landing'); setView('dashboard');
+    setProfile(null); setSession(null); setActiveTaskId(null); setLoginEmail(''); setLoginPassword(''); setScreen('landing'); setView('dashboard');
   }
   function startCreate() {
     setEditing(null);
@@ -413,9 +372,9 @@ export default function App() {
 
   if (screen === 'login') return (
     <main className="login-screen"><button className="back-link" onClick={() => setScreen('landing')}><ChevronLeft size={16} /> Back to Ediova</button><section className="login-card"><a className="brand login-brand" href="#" onClick={e => { e.preventDefault(); setScreen('landing'); }}><img src="./ediova-mark.svg" alt="" /><span>ediova<span className="brand-dot">.</span></span></a><span className="eyebrow"><LockKeyhole size={13} /> PRIVATE TEAM SPACE</span><h1>Good to have<br />you <em>back.</em></h1><p className="login-intro">Sign in with your authorised Ediova account. Your access level is assigned automatically to your account.</p>
-            {isSupabaseConfigured ? <form className="login-form" onSubmit={submitLogin} autoComplete="off"><label>Email address<input type="email" name="ediova-account-entry" autoComplete="off" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@ediova.com" /></label><label>Password<input type="password" name="ediova-password-entry" autoComplete="new-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Enter your password each time" /></label>{turnstileSiteKey && <div className="captcha-block"><span>Quick human check</span><div ref={captchaHost} className="turnstile-host" /><small>Simple verification to protect the sign-in form.</small></div>}<button className="button button-dark full" disabled={loading || (!!turnstileSiteKey && !captchaToken)}>{loading ? 'Signing in…' : 'Sign in securely'} <ArrowRight size={16} /></button></form> : <div className="preview-note"><Sparkles size={17} /><span><strong>Interactive preview</strong><small>Supabase is not configured yet. Continue to explore the interface with local sample data.</small></span></div>}
+            {isSupabaseConfigured ? <form className="login-form" onSubmit={submitLogin} autoComplete="off"><label>Email address<input type="email" name="ediova-account-entry" autoComplete="off" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@ediova.com" /></label><label>Password<input type="password" name="ediova-password-entry" autoComplete="new-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Enter your password each time" /></label><button className="button button-dark full" disabled={loading}>{loading ? 'Signing in…' : 'Sign in securely'} <ArrowRight size={16} /></button></form> : <div className="preview-note"><Sparkles size={17} /><span><strong>Interactive preview</strong><small>Supabase is not configured yet. Continue to explore the interface with local sample data.</small></span></div>}
       {!isSupabaseConfigured && <button className="button button-dark full" onClick={() => void submitLogin(new Event('submit') as unknown as FormEvent)} disabled={loading}>Continue to preview <ArrowRight size={16} /></button>}
-      <p className="login-legal">Access is provided by Ediova. This page does not store your email or password; enter them each time.</p>{!turnstileSiteKey && <p className="captcha-setup-note">Human verification is not active yet; an administrator must finish the Turnstile site-key setup.</p>}</section><footer className="login-footer"><span>© {new Date().getFullYear()} Ediova</span><a href="mailto:support@ediova.com">Need help? Contact the team</a><button onClick={() => setView('privacy')}>Privacy &amp; security</button></footer></main>
+      <p className="login-legal">Access is provided by Ediova. This page does not store your email or password; enter them each time.</p></section><footer className="login-footer"><span>© {new Date().getFullYear()} Ediova</span><a href="mailto:support@ediova.com">Need help? Contact the team</a><button onClick={() => setView('privacy')}>Privacy &amp; security</button></footer></main>
   );
 
   const navViews = nav.concat([{ id: 'policies', label: 'Company policies', icon: FileText }, { id: 'privacy', label: 'Privacy & security', icon: ShieldCheck }]);
