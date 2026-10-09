@@ -319,12 +319,12 @@ export default function App() {
   }
   function startCreate() {
     setEditing(null);
-    setDraft({ title: '', description: '', scheduled: inputInKarachi(hour(1)), deadline: inputInKarachi(hour(25)), priority: 'normal', resource: '', assignee: team.find(p => p.role === 'manager')?.id || managerDemo.id, repeatUnit: 'none', repeatEvery: 1, repeatUntil: '' });
+    setDraft({ title: '', description: '', scheduled: inputInKarachi(hour(1)), deadline: inputInKarachi(hour(25)), priority: 'normal', resource: '', assignee: team.find(p => p.role === 'manager')?.id || managerDemo.id, repeatUnit: 'none', repeatEvery: 1, repeatUntil: '', repeatMonthlyCount: 1, repeatDayOne: 15, repeatDayTwo: 28 });
     setComposer(true);
   }
   function startEdit(task: Task) {
     setEditing(task);
-    setDraft({ title: task.title, description: task.description, scheduled: inputInKarachi(task.scheduled_at), deadline: inputInKarachi(task.deadline_at), priority: task.priority, resource: (task.resource_urls?.length ? task.resource_urls : task.resource_url ? [task.resource_url] : []).join('\n'), assignee: task.assignee_id || team.find(p => p.role === 'manager')?.id || managerDemo.id, repeatUnit: task.repeat_unit || 'none', repeatEvery: task.repeat_every || 1, repeatUntil: task.repeat_until ? inputInKarachi(task.repeat_until) : '' });
+    setDraft({ title: task.title, description: task.description, scheduled: inputInKarachi(task.scheduled_at), deadline: inputInKarachi(task.deadline_at), priority: task.priority, resource: (task.resource_urls?.length ? task.resource_urls : task.resource_url ? [task.resource_url] : []).join('\n'), assignee: task.assignee_id || team.find(p => p.role === 'manager')?.id || managerDemo.id, repeatUnit: task.repeat_unit || 'none', repeatEvery: task.repeat_every || 1, repeatUntil: task.repeat_until ? inputInKarachi(task.repeat_until) : '', repeatMonthlyCount: task.repeat_monthly_count === 2 ? 2 : 1, repeatDayOne: task.repeat_day_one || Number(keyFor(task.scheduled_at).split('-')[2]), repeatDayTwo: task.repeat_day_two || 28 });
     setComposer(true);
   }
   async function saveTask(event: FormEvent) {
@@ -332,7 +332,8 @@ export default function App() {
     if (!director) return;
     if (new Date(fromKarachiInput(draft.deadline)).getTime() <= new Date(fromKarachiInput(draft.scheduled)).getTime()) { notify('Deadline must be after the release time.'); return; }
     if (draft.repeatUnit !== 'none' && draft.repeatUntil && new Date(fromKarachiInput(draft.repeatUntil)).getTime() <= new Date(fromKarachiInput(draft.scheduled)).getTime()) { notify('Repeat-until must be after the first scheduled occurrence.'); return; }
-    const changes = { title: draft.title.trim(), description: draft.description.trim(), scheduled_at: fromKarachiInput(draft.scheduled), deadline_at: fromKarachiInput(draft.deadline), priority: draft.priority, resource_url: draft.resource.trim() || null, assignee_id: draft.assignee || team.find(p => p.role === 'manager')?.id || managerDemo.id, repeat_unit: draft.repeatUnit, repeat_every: draft.repeatEvery, repeat_until: draft.repeatUnit !== 'none' && draft.repeatUntil ? fromKarachiInput(draft.repeatUntil) : null };
+    if (draft.repeatUnit === 'monthly' && draft.repeatMonthlyCount === 2 && draft.repeatDayOne === draft.repeatDayTwo) { notify('Choose two different dates for the monthly repeats.'); return; }
+    const changes = { title: draft.title.trim(), description: draft.description.trim(), scheduled_at: fromKarachiInput(draft.scheduled), deadline_at: fromKarachiInput(draft.deadline), priority: draft.priority, resource_url: draft.resource.trim() || null, assignee_id: draft.assignee || team.find(p => p.role === 'manager')?.id || managerDemo.id, repeat_unit: draft.repeatUnit, repeat_every: draft.repeatUnit === 'monthly' ? 1 : draft.repeatEvery, repeat_until: draft.repeatUnit !== 'none' && draft.repeatUntil ? fromKarachiInput(draft.repeatUntil) : null, repeat_monthly_count: draft.repeatMonthlyCount, repeat_day_one: draft.repeatUnit === 'monthly' ? draft.repeatDayOne : null, repeat_day_two: draft.repeatUnit === 'monthly' && draft.repeatMonthlyCount === 2 ? draft.repeatDayTwo : null };
     if (session && supabase && profile) {
       const databaseChanges = toDatabaseTask(changes);
       const result = editing
