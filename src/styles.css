@@ -317,3 +317,6 @@ body{background:#f6f9f4;color:var(--ink)}
   .task-dialog{padding:17px}
   .task-dialog .inspector-top{top:-17px}
 }
+
+/* Transition progress bar now matches the 2-second login handoff. */
+.loading-track i{animation-duration:2s}
