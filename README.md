@@ -7,13 +7,13 @@ A React, TypeScript and Vite website for Ediova Inc., with an authenticated task
 - Green-gradient Ediova logo and blended green/lime palette with a small orange accent.
 - Animated landing page and a 2-second logo transition when entering login.
 - No role picker on login. Supabase assigns role access from the signed-in profile.
-- Login inputs are not saved by the app; browser autofill is discouraged.
-- Manager and Managing Director task views, a compact today-only task dashboard, role-aware task details, comments, resources and calendar.
-- Recurring tasks: daily, weekly on selected weekdays (every 1 or 2 weeks), and monthly on selected calendar dates. Weekly repeats default to 12:00 AM Pakistan time.
+- Login supports browser autofill, remembered Supabase sessions, and clear inline sign-in feedback. Users should sign out on shared computers.
+- Manager and Managing Director task views, a compact today-only task dashboard, role-aware task details, comments, resources and calendar. The Managing Director alone can delete tasks and can release a task immediately with Start now.
+- Recurring tasks: daily, weekly on selected weekdays (every 1 or 2 weeks), and monthly on selected calendar dates. Blank end dates mean an ongoing series. Occurrences are generated within the current calendar month and continue into each new month. Weekly repeats default to 12:00 AM Pakistan time.
 - Completed work is moved out of active tasks. The Director can reopen completed tasks.
 - A seven-person team directory popup.
 - A company-notice tool for the Managing Director; the latest active notice appears at the top of dashboards.
-- Monthly performance: completed task counts and director-credited hours by month, plus the existing late-task score (minus 10 points for every full 24 hours late, minimum 0). Task-level hour targets are stored separately and visible only to the Managing Director; Managers see monthly totals, not individual targets. Credited hours are the Managing Director's task-hour allocation, not stopwatch-tracked time.
+- Performance: monthly totals and a selectable calendar for daily completed-task counts and credited hours, plus the existing late-task score (minus 10 points for every full 24 hours late, minimum 0). The Managing Director manually assigns hours to each task. Task-level hour targets are stored separately and visible only to the Managing Director; Managers see monthly and daily totals, not individual targets. Credited hours are task allocations, not stopwatch-tracked time.
 - Asia/Karachi (UTC+05:00) display and scheduling.
 - Supabase row-level security, a recurring-task generator scheduled hourly, security headers, organization metadata, robots.txt and sitemap.xml.
 
