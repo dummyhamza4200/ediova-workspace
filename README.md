@@ -8,12 +8,12 @@ A React, TypeScript and Vite website for Ediova Inc., with an authenticated task
 - Animated landing page and a 2-second logo transition when entering login.
 - No role picker on login. Supabase assigns role access from the signed-in profile.
 - Login inputs are not saved by the app; browser autofill is discouraged.
-- Manager and Managing Director task views, a clean deadline-first dashboard, task-detail popup, comments, resources and calendar.
-- Recurring tasks: daily, weekly, and monthly on selected calendar dates, with one or two dates each month.
+- Manager and Managing Director task views, a compact today-only task dashboard, role-aware task details, comments, resources and calendar.
+- Recurring tasks: daily, weekly on selected weekdays (every 1 or 2 weeks), and monthly on selected calendar dates. Weekly repeats default to 12:00 AM Pakistan time.
 - Completed work is moved out of active tasks. The Director can reopen completed tasks.
 - A seven-person team directory popup.
 - A company-notice tool for the Managing Director; the latest active notice appears at the top of dashboards.
-- Manager performance scoring: every full 24 hours a task is late deducts 10 points from the score (minimum 0). Scores are recalculated from live task data.
+- Monthly performance: completed task counts and director-credited hours by month, plus the existing late-task score (minus 10 points for every full 24 hours late, minimum 0). Task-level hour targets are stored separately and visible only to the Managing Director; Managers see monthly totals, not individual targets.
 - Asia/Karachi (UTC+05:00) display and scheduling.
 - Supabase row-level security, a recurring-task generator scheduled hourly, security headers, organization metadata, robots.txt and sitemap.xml.
 
@@ -57,9 +57,10 @@ Until both the provider secret in Supabase and the public site key for the front
 
 The app connects to the existing Supabase project used for Ediova. The database migrations already applied to that project include:
 - Row-level task access, including manager release-time restrictions.
-- The recurrence fields and hourly generator.
+- The recurrence fields, selected-weekday rules and hourly generator.
 - Team directory and notices tables.
-- Manager performance view.
+- Director-only task-hour targets protected by row-level security.
+- Role-checked monthly performance aggregate functions and a security-invoker compatibility performance view.
 - Tightened task-level comment/history policies.
 
 Do not apply the older starter migration in supabase/migrations/202610090001_initial_schema.sql to the current database as a new schema; it predates the live schema. Use Supabase's recorded migrations and the live schema as the source of truth.
@@ -68,7 +69,8 @@ Do not apply the older starter migration in supabase/migrations/202610090001_ini
 
 The current database contains the two authenticated profiles. Before relying on the workspace for operations, sign in separately with each real account in the browser and verify:
 - The manager can see assigned released work only, complete tasks, add comments and open completed work.
-- The director can create, edit, schedule, repeat, reopen and assign tasks, view performance, send a notice and archive it.
+- The director can create, edit, schedule, repeat by selected weekday, set private hour targets, reopen and assign tasks, view monthly performance, send a notice and archive it.
+- Managers can see their own monthly credited hours and completed task counts, but cannot query task-specific hour targets.
 - A monthly task configured for two dates generates two future occurrences per month at the configured release time.
 - The Manager's performance score drops by 10 points for every full day late per task and never falls below 0.
 
