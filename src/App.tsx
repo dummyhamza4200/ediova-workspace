@@ -16,6 +16,7 @@ type Profile = { id: string; full_name: string; role: Role; location?: string | 
 type TeamMember = { id: string; full_name: string; job_title: string; location: string; sort_order: number; profile_id?: string | null };
 type CompanyNotice = { id: string; title: string; body: string; created_by: string; created_at: string; is_active: boolean; expires_at?: string | null };
 type PerformanceRow = { manager_id: string; manager_name: string; location?: string | null; assigned_tasks: number; completed_tasks: number; delayed_tasks: number; penalty_points: number; performance_score: number };
+type MonthlyPerformanceRow = { manager_id: string; manager_name: string; location?: string | null; month_start: string; completed_tasks: number; completed_hours: number };
 type RepeatMonthlyCount = 1 | 2;
 type Task = {
   id: string; title: string; description: string; scheduled_at: string; deadline_at: string;
@@ -23,9 +24,10 @@ type Task = {
   created_by?: string | null; completed_at?: string | null; updated_at?: string;
   repeat_unit?: RepeatUnit; repeat_every?: number; repeat_until?: string | null; recurrence_parent_id?: string | null;
   repeat_monthly_count?: RepeatMonthlyCount; repeat_day_one?: number | null; repeat_day_two?: number | null;
+  repeat_weekdays?: number[];
 };
 type Comment = { id: string; task_id: string; author_id: string; body: string; created_at: string; author_name?: string };
-type Draft = { title: string; description: string; scheduled: string; deadline: string; priority: Priority; resource: string; assignee: string; repeatUnit: RepeatUnit; repeatEvery: number; repeatUntil: string; repeatMonthlyCount: RepeatMonthlyCount; repeatDayOne: number; repeatDayTwo: number };
+type Draft = { title: string; description: string; scheduled: string; deadline: string; priority: Priority; resource: string; assignee: string; repeatUnit: RepeatUnit; repeatEvery: number; repeatUntil: string; repeatMonthlyCount: RepeatMonthlyCount; repeatDayOne: number; repeatDayTwo: number; repeatDays: number[]; targetHours: string };
 
 const managerDemo: Profile = { id: 'demo-manager', full_name: 'Umna Haroon', role: 'manager', location: 'Islamabad, Pakistan', experience: '2+ years' };
 const directorDemo: Profile = { id: 'demo-director', full_name: 'Hamza Mubarak', role: 'managing_director', location: 'Yogyakarta, Indonesia' };
@@ -63,6 +65,7 @@ function fromDatabaseTask(row: Record<string, unknown>): Task {
     resource_url: normalizedLinks[0] || null,
     repeat_unit: (row.repeat_unit ?? 'none') as RepeatUnit,
     repeat_every: Number(row.repeat_every ?? 1),
+    repeat_weekdays: Array.isArray(row.repeat_weekdays) ? row.repeat_weekdays.map(Number).filter((day: number) => Number.isInteger(day) && day >= 1 && day <= 7) : [],
     repeat_until: typeof row.repeat_until === 'string' ? row.repeat_until : null,
     recurrence_parent_id: typeof row.recurrence_parent_id === 'string' ? row.recurrence_parent_id : null,
     repeat_monthly_count: Number(row.repeat_monthly_count ?? 1) === 2 ? 2 : 1,
@@ -70,7 +73,7 @@ function fromDatabaseTask(row: Record<string, unknown>): Task {
     repeat_day_two: row.repeat_day_two == null ? null : Number(row.repeat_day_two),
   };
 }
-function toDatabaseTask(changes: { title: string; description: string; scheduled_at: string; deadline_at: string; priority: Priority; resource_url: string | null; assignee_id: string; repeat_unit: RepeatUnit; repeat_every: number; repeat_until: string | null; repeat_monthly_count: RepeatMonthlyCount; repeat_day_one: number | null; repeat_day_two: number | null }): Record<string, unknown> {
+function toDatabaseTask(changes: { title: string; description: string; scheduled_at: string; deadline_at: string; priority: Priority; resource_url: string | null; assignee_id: string; repeat_unit: RepeatUnit; repeat_every: number; repeat_until: string | null; repeat_monthly_count: RepeatMonthlyCount; repeat_day_one: number | null; repeat_day_two: number | null; repeat_weekdays: number[] }): Record<string, unknown> {
   const { scheduled_at, priority, resource_url, ...rest } = changes;
   return {
     ...rest,
@@ -120,6 +123,40 @@ function inputInKarachi(value?: string) {
   return o.year + '-' + o.month + '-' + o.day + 'T' + o.hour + ':' + o.minute;
 }
 function fromKarachiInput(value: string) { return new Date(value + ':00+05:00').toISOString(); }
+function weekdayFor(value: string) {
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return weekday === 0 ? 7 : weekday;
+}
+function nextKarachiMidnightInput() {
+  const parts = karachiParts(new Date());
+  const nextDay = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + 1));
+  const date = nextDay.getUTCFullYear() + '-' + String(nextDay.getUTCMonth() + 1).padStart(2, '0') + '-' + String(nextDay.getUTCDate()).padStart(2, '0');
+  return date + 'T00:00';
+}
+function firstSelectedWeekdayInput(value: string, days: number[]) {
+  if (!days.length) return value;
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+  const time = value.slice(11, 16) || '00:00';
+  const date = new Date(Date.UTC(year, month - 1, day));
+  for (let offset = 0; offset < 7; offset += 1) {
+    const weekday = date.getUTCDay() === 0 ? 7 : date.getUTCDay();
+    if (days.includes(weekday)) {
+      const formatted = date.getUTCFullYear() + '-' + String(date.getUTCMonth() + 1).padStart(2, '0') + '-' + String(date.getUTCDate()).padStart(2, '0');
+      return formatted + 'T' + time;
+    }
+    date.setUTCDate(date.getUTCDate() + 1);
+  }
+  return value;
+}
+function defaultTaskDraft(): Draft {
+  const scheduled = nextKarachiMidnightInput();
+  return {
+    title: '', description: '', scheduled, deadline: scheduled.slice(0, 10) + 'T23:59',
+    priority: 'normal', resource: '', assignee: '', repeatUnit: 'none', repeatEvery: 1, repeatUntil: '',
+    repeatMonthlyCount: 1, repeatDayOne: 15, repeatDayTwo: 28, repeatDays: [weekdayFor(scheduled)], targetHours: '',
+  };
+}
 function effectiveStatus(task: Task): string {
   if (task.status !== 'completed' && task.status !== 'cancelled' && task.status !== 'archived' && new Date(task.deadline_at).getTime() < Date.now()) return 'overdue';
   return task.status;
@@ -138,6 +175,9 @@ export default function App() {
   const [noticeTitleDraft, setNoticeTitleDraft] = useState('');
   const [noticeBodyDraft, setNoticeBodyDraft] = useState('');
   const [performanceRows, setPerformanceRows] = useState<PerformanceRow[]>([]);
+  const [monthlyPerformanceRows, setMonthlyPerformanceRows] = useState<MonthlyPerformanceRow[]>([]);
+  const [performanceMonth, setPerformanceMonth] = useState(() => todayKey().slice(0, 7));
+  const [directorTaskHours, setDirectorTaskHours] = useState<Record<string, number>>({});
   const [profile, setProfile] = useState<Profile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [team, setTeam] = useState<Profile[]>([]);
@@ -156,7 +196,7 @@ export default function App() {
   const [commentDraft, setCommentDraft] = useState('');
   const [composer, setComposer] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
-  const [draft, setDraft] = useState<Draft>(() => ({ title: '', description: '', scheduled: inputInKarachi(hour(1)), deadline: inputInKarachi(hour(25)), priority: 'normal', resource: '', assignee: '', repeatUnit: 'none', repeatEvery: 1, repeatUntil: '', repeatMonthlyCount: 1, repeatDayOne: 15, repeatDayTwo: 28 }));
+  const [draft, setDraft] = useState<Draft>(() => defaultTaskDraft());
 
   const role = profile?.role || 'manager';
   const director = role === 'managing_director';
@@ -196,6 +236,13 @@ export default function App() {
     const { data: rows, error: taskError } = await supabase.from('tasks').select('*').order('schedule_at', { ascending: true });
     if (taskError) notify('Workspace opened, but tasks could not load.');
     else setTasks((rows || []).map(row => fromDatabaseTask(row as unknown as Record<string, unknown>)));
+    if (data.role === 'managing_director') {
+      const { data: hourRows, error: hourError } = await supabase.from('task_hour_targets').select('task_id,target_hours');
+      if (hourError) notify('Private task-hour targets could not be loaded.');
+      else setDirectorTaskHours(Object.fromEntries((hourRows || []).map((row: { task_id: string; target_hours: number | string }) => [row.task_id, Number(row.target_hours)])));
+    } else {
+      setDirectorTaskHours({});
+    }
     setComments([]);
     setScreen('workspace'); setLoading(false);
   }
@@ -226,13 +273,17 @@ export default function App() {
     if (!session || !supabase || view !== 'performance') return;
     let active = true;
     const refreshPerformance = async () => {
-      const { data, error } = await supabase!.from('manager_performance').select('*').order('performance_score', { ascending: true });
-      if (active && !error && data) setPerformanceRows(data as PerformanceRow[]);
+      const [scores, monthly] = await Promise.all([
+        supabase!.from('manager_performance').select('*').order('performance_score', { ascending: true }),
+        supabase!.from('manager_monthly_performance').select('*').eq('month_start', performanceMonth + '-01').order('manager_name'),
+      ]);
+      if (active && !scores.error && scores.data) setPerformanceRows(scores.data as PerformanceRow[]);
+      if (active && !monthly.error && monthly.data) setMonthlyPerformanceRows(monthly.data as MonthlyPerformanceRow[]);
     };
     void refreshPerformance();
     const timer = window.setInterval(() => void refreshPerformance(), 60000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [session, view]);
+  }, [session, view, performanceMonth]);
   const released = useMemo(() => tasks.filter(t => director || new Date(t.scheduled_at).getTime() <= Date.now()), [tasks, director]);
   const active = released.filter(t => t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'archived');
   const overdue = active.filter(t => effectiveStatus(t) === 'overdue');
@@ -246,7 +297,7 @@ export default function App() {
     return [...data].sort((a, b) => new Date(a.deadline_at).getTime() - new Date(b.deadline_at).getTime());
   }, [view, completed, active, selectedTaskDay, search, filter]);
   const activeTask = released.find(t => t.id === activeTaskId) || null;
-  const todayTasks = active.filter(t => dayOffset(t.deadline_at) === 0);
+  const todayTasks = active.filter(t => dayOffset(t.scheduled_at) === 0).sort((a, b) => new Date(a.deadline_at).getTime() - new Date(b.deadline_at).getTime());
   const nav: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
     { id: 'tasks', label: 'All tasks', icon: Target },
@@ -279,36 +330,96 @@ export default function App() {
   }
   function startCreate() {
     setEditing(null);
-    setDraft({ title: '', description: '', scheduled: inputInKarachi(hour(1)), deadline: inputInKarachi(hour(25)), priority: 'normal', resource: '', assignee: team.find(p => p.role === 'manager')?.id || managerDemo.id, repeatUnit: 'none', repeatEvery: 1, repeatUntil: '', repeatMonthlyCount: 1, repeatDayOne: 15, repeatDayTwo: 28 });
+    setDraft({ ...defaultTaskDraft(), assignee: team.find(p => p.role === 'manager')?.id || managerDemo.id });
     setComposer(true);
   }
   function startEdit(task: Task) {
     setEditing(task);
-    setDraft({ title: task.title, description: task.description, scheduled: inputInKarachi(task.scheduled_at), deadline: inputInKarachi(task.deadline_at), priority: task.priority, resource: (task.resource_urls?.length ? task.resource_urls : task.resource_url ? [task.resource_url] : []).join('\n'), assignee: task.assignee_id || team.find(p => p.role === 'manager')?.id || managerDemo.id, repeatUnit: task.repeat_unit || 'none', repeatEvery: task.repeat_every || 1, repeatUntil: task.repeat_until ? inputInKarachi(task.repeat_until) : '', repeatMonthlyCount: task.repeat_monthly_count === 2 ? 2 : 1, repeatDayOne: task.repeat_day_one || Number(keyFor(task.scheduled_at).split('-')[2]), repeatDayTwo: task.repeat_day_two || 28 });
+    setDraft({
+      title: task.title, description: task.description, scheduled: inputInKarachi(task.scheduled_at),
+      deadline: inputInKarachi(task.deadline_at), priority: task.priority,
+      resource: (task.resource_urls?.length ? task.resource_urls : task.resource_url ? [task.resource_url] : []).join('\n'),
+      assignee: task.assignee_id || team.find(p => p.role === 'manager')?.id || managerDemo.id,
+      repeatUnit: task.repeat_unit || 'none', repeatEvery: task.repeat_every || 1,
+      repeatUntil: task.repeat_until ? inputInKarachi(task.repeat_until) : '',
+      repeatMonthlyCount: task.repeat_monthly_count === 2 ? 2 : 1,
+      repeatDayOne: task.repeat_day_one || Number(keyFor(task.scheduled_at).split('-')[2]),
+      repeatDayTwo: task.repeat_day_two || 28,
+      repeatDays: task.repeat_weekdays?.length ? [...task.repeat_weekdays] : [weekdayFor(task.scheduled_at)],
+      targetHours: directorTaskHours[task.id] == null ? '' : String(directorTaskHours[task.id]),
+    });
     setComposer(true);
   }
   async function saveTask(event: FormEvent) {
     event.preventDefault();
-    if (!director) return;
-    if (new Date(fromKarachiInput(draft.deadline)).getTime() <= new Date(fromKarachiInput(draft.scheduled)).getTime()) { notify('Deadline must be after the release time.'); return; }
-    if (draft.repeatUnit !== 'none' && draft.repeatUntil && new Date(fromKarachiInput(draft.repeatUntil)).getTime() <= new Date(fromKarachiInput(draft.scheduled)).getTime()) { notify('Repeat-until must be after the first scheduled occurrence.'); return; }
-    if (draft.repeatUnit === 'monthly' && draft.repeatMonthlyCount === 2 && draft.repeatDayOne === draft.repeatDayTwo) { notify('Choose two different dates for the monthly repeats.'); return; }
-    const changes = { title: draft.title.trim(), description: draft.description.trim(), scheduled_at: fromKarachiInput(draft.scheduled), deadline_at: fromKarachiInput(draft.deadline), priority: draft.priority, resource_url: draft.resource.trim() || null, assignee_id: draft.assignee || team.find(p => p.role === 'manager')?.id || managerDemo.id, repeat_unit: draft.repeatUnit, repeat_every: draft.repeatUnit === 'monthly' ? 1 : draft.repeatEvery, repeat_until: draft.repeatUnit !== 'none' && draft.repeatUntil ? fromKarachiInput(draft.repeatUntil) : null, repeat_monthly_count: draft.repeatUnit === 'monthly' ? draft.repeatMonthlyCount : 1, repeat_day_one: draft.repeatUnit === 'monthly' ? draft.repeatDayOne : null, repeat_day_two: draft.repeatUnit === 'monthly' && draft.repeatMonthlyCount === 2 ? draft.repeatDayTwo : null };
-    if (session && supabase && profile) {
+    if (!director || !profile) return;
+    if (draft.repeatUnit === 'weekly' && draft.repeatDays.length === 0) {
+      notify('Choose at least one weekday for the weekly repeat.'); return;
+    }
+    const scheduledInput = draft.repeatUnit === 'weekly' ? firstSelectedWeekdayInput(draft.scheduled, draft.repeatDays) : draft.scheduled;
+    const scheduleShift = fromKarachiInput(scheduledInput).getTime() - fromKarachiInput(draft.scheduled).getTime();
+    const scheduledAt = fromKarachiInput(scheduledInput);
+    const deadlineAt = new Date(fromKarachiInput(draft.deadline).getTime() + scheduleShift).toISOString();
+    if (new Date(deadlineAt).getTime() <= new Date(scheduledAt).getTime()) {
+      notify('Deadline must be after the release time.'); return;
+    }
+    if (draft.repeatUnit !== 'none' && draft.repeatUntil && new Date(fromKarachiInput(draft.repeatUntil)).getTime() <= new Date(scheduledAt).getTime()) {
+      notify('Repeat-until must be after the first scheduled occurrence.'); return;
+    }
+    if (draft.repeatUnit === 'monthly' && draft.repeatMonthlyCount === 2 && draft.repeatDayOne === draft.repeatDayTwo) {
+      notify('Choose two different dates for the monthly repeats.'); return;
+    }
+    const targetHours = draft.targetHours.trim() === '' ? null : Number(draft.targetHours);
+    if (targetHours !== null && (!Number.isFinite(targetHours) || targetHours < 0.25 || targetHours > 1000)) {
+      notify('Private task hours must be between 0.25 and 1,000.'); return;
+    }
+    const changes = {
+      title: draft.title.trim(), description: draft.description.trim(), scheduled_at: scheduledAt,
+      deadline_at: deadlineAt, priority: draft.priority, resource_url: draft.resource.trim() || null,
+      assignee_id: draft.assignee || team.find(p => p.role === 'manager')?.id || managerDemo.id,
+      repeat_unit: draft.repeatUnit, repeat_every: draft.repeatUnit === 'monthly' ? 1 : draft.repeatEvery,
+      repeat_until: draft.repeatUnit !== 'none' && draft.repeatUntil ? fromKarachiInput(draft.repeatUntil) : null,
+      repeat_monthly_count: draft.repeatUnit === 'monthly' ? draft.repeatMonthlyCount : 1,
+      repeat_day_one: draft.repeatUnit === 'monthly' ? draft.repeatDayOne : null,
+      repeat_day_two: draft.repeatUnit === 'monthly' && draft.repeatMonthlyCount === 2 ? draft.repeatDayTwo : null,
+      repeat_weekdays: draft.repeatUnit === 'weekly' ? [...draft.repeatDays].sort((a, b) => a - b) : [],
+    };
+    let savedTask: Task;
+    let warning = '';
+    if (session && supabase) {
       const databaseChanges = toDatabaseTask(changes);
       const result = editing
         ? await supabase.from('tasks').update(databaseChanges).eq('id', editing.id).select('*').single()
         : await supabase.from('tasks').insert({ ...databaseChanges, status: 'pending', created_by: profile.id }).select('*').single();
-      if (result.error) { notify('Could not save task: ' + result.error.message); return; }
-      const savedTask = fromDatabaseTask(result.data as unknown as Record<string, unknown>);
-      if (editing) setTasks(prev => prev.map(t => t.id === editing.id ? savedTask : t));
-      else setTasks(prev => [...prev, savedTask]);
+      if (result.error || !result.data) { notify('Could not save task: ' + (result.error?.message || 'please try again')); return; }
+      savedTask = fromDatabaseTask(result.data as unknown as Record<string, unknown>);
+      if (targetHours !== null) {
+        const { error: targetError } = await supabase.from('task_hour_targets').upsert({
+          task_id: savedTask.id, target_hours: targetHours, set_by: profile.id, updated_at: new Date().toISOString(),
+        }, { onConflict: 'task_id' });
+        if (targetError) warning = 'Task saved, but private hours could not be saved: ' + targetError.message;
+        else setDirectorTaskHours(prev => ({ ...prev, [savedTask.id]: targetHours }));
+      } else if (editing) {
+        const { error: targetError } = await supabase.from('task_hour_targets').delete().eq('task_id', savedTask.id);
+        if (targetError) warning = 'Task saved, but its previous private hour target could not be cleared: ' + targetError.message;
+        else setDirectorTaskHours(prev => { const next = { ...prev }; delete next[savedTask.id]; return next; });
+      }
+      setTasks(prev => editing ? prev.map(t => t.id === savedTask.id ? savedTask : t) : [...prev, savedTask]);
     } else {
-      if (editing) setTasks(prev => prev.map(t => t.id === editing.id ? { ...t, ...changes } : t));
-      else setTasks(prev => [...prev, { id: 'local-' + Date.now(), ...changes, status: 'pending' }]);
+      savedTask = editing
+        ? { ...editing, ...changes }
+        : { id: 'local-' + Date.now(), ...changes, status: 'pending' };
+      setTasks(prev => editing ? prev.map(t => t.id === savedTask.id ? savedTask : t) : [...prev, savedTask]);
+      setDirectorTaskHours(prev => {
+        const next = { ...prev };
+        if (targetHours === null) delete next[savedTask.id]; else next[savedTask.id] = targetHours;
+        return next;
+      });
     }
-    setComposer(false); notify(editing ? 'Task updated.' : 'Task scheduled.');
+    setComposer(false);
+    notify(warning || (editing ? 'Task updated.' : 'Task scheduled.'));
   }
+
   async function setStatus(task: Task, status: Status) {
     if (!director && task.scheduled_at > new Date().toISOString()) return;
     const patch = { status, completed_at: status === 'completed' ? new Date().toISOString() : null };
@@ -412,28 +523,19 @@ export default function App() {
       {preview && <div className="preview-banner"><Sparkles size={16} /><span><strong>Preview mode</strong> — changes are saved in this browser only. Configure Supabase for shared accounts and cross-device persistence.</span></div>}
       {view === 'dashboard' && <div className="welcome-row"><div><span className="eyebrow">YOUR SPACE, AT A GLANCE</span><h2>{director ? 'See the whole picture.' : 'Let’s make today count.'}</h2><p>{director ? 'Keep the moving parts clear, connected and on track.' : 'One good step at a time. Your next move starts here.'}</p></div><div className="date-pill"><span>{todayTasks.length}</span><div><strong>Due today</strong><small>Pakistan Standard Time</small></div></div></div>}
       {view === 'dashboard' && dashboardNotice && <div className="company-notice"><div className="notice-symbol"><Bell size={16} /></div><div className="notice-copy"><span>COMPANY NOTICE</span><strong>{dashboardNotice.title}</strong><p>{dashboardNotice.body}</p></div>{director && <button className="notice-dismiss" onClick={() => void dismissDashboardNotice()} aria-label="Archive notice">Archive</button>}</div>}
-      {view === 'dashboard' && <>
-        <div className="day-board">
-          {[-1, 0, 1, 2].map(offset => {
-            const items = (offset < 0 ? active.filter(t => dayOffset(t.deadline_at) < 0) : active.filter(t => dayOffset(t.deadline_at) === offset)).sort((a, b) => new Date(a.deadline_at).getTime() - new Date(b.deadline_at).getTime());
-            if (offset !== 0 && items.length === 0) return null;
-            return <section className="day-group" key={offset}>
-              <header className="day-group-header"><div><span className="eyebrow">{daySubheading(offset)}</span><h2>{dayHeading(offset)}</h2></div><span className="day-count">{String(items.length).padStart(2, '0')}</span></header>
-              <div className="day-task-list">
-                {items.length ? items.map(task => <TaskCard key={task.id} task={task} selected={activeTaskId === task.id} director={director} onOpen={() => openTask(task)} onStatus={status => void setStatus(task, status)} onEdit={() => startEdit(task)} />) : <p className="day-empty">Nothing scheduled for today. Enjoy the breathing room.</p>}
-              </div>
-            </section>;
-          })}
-          <div className="calendar-nudge"><div><CalendarDays size={17} /><div><strong>Looking further ahead?</strong><span>See the full schedule and all future assignments in Calendar.</span></div></div><button className="button button-light" onClick={() => setView('calendar')}>Open calendar <ArrowRight size={15} /></button></div>
+      {view === 'dashboard' && <section className="today-board">
+        <header className="today-board-header"><div><span className="eyebrow">TODAY'S FOCUS</span><h2>Today's tasks</h2><p>{todayTasks.length ? 'A clear, focused view of the work scheduled for today.' : 'Nothing scheduled for today. Enjoy the breathing room.'}</p></div><span className="today-count">{String(todayTasks.length).padStart(2, '0')} tasks</span></header>
+        <div className="today-task-grid" style={{ gridTemplateColumns: `repeat(${Math.max(2, Math.ceil(todayTasks.length / 3))}, minmax(0, 1fr))` }}>
+          {todayTasks.length ? todayTasks.map((task, index) => <TaskCard key={task.id} colorIndex={index} task={task} selected={activeTaskId === task.id} director={director} onOpen={() => openTask(task)} onStatus={status => void setStatus(task, status)} onEdit={() => startEdit(task)} />) : <div className="today-empty"><div className="empty-icon"><Check size={22} /></div><h3>Room to breathe.</h3><p>Tasks for another day stay off this dashboard. Open All tasks or Calendar when you need the wider schedule.</p></div>}
         </div>
-      </>}
+      </section>}
       {view === 'tasks' && <>
         <div className="day-picker-header"><div><span className="eyebrow">A CLEAR PLAN, ONE DAY AT A TIME</span><h2>Tasks by day</h2><p>Open a task to see its full brief, links and conversation.</p></div></div>
         <div className="day-switcher">
           {[-1, 0, 1, 2].map(offset => <button type="button" key={offset} className={selectedTaskDay === offset ? 'day-switch current' : 'day-switch'} onClick={() => setSelectedTaskDay(offset)}><span>{dayHeading(offset)}</span><small>{offset < 0 ? active.filter(t => dayOffset(t.deadline_at) < 0).length : active.filter(t => dayOffset(t.deadline_at) === offset).length} tasks</small></button>)}
         </div>
         <div className="day-task-list task-list-simple">
-          {visible.map(task => <TaskCard key={task.id} task={task} selected={activeTaskId === task.id} director={director} onOpen={() => openTask(task)} onStatus={status => void setStatus(task, status)} onEdit={() => startEdit(task)} />)}
+          {visible.map((task, index) => <TaskCard key={task.id} colorIndex={index} task={task} selected={activeTaskId === task.id} director={director} onOpen={() => openTask(task)} onStatus={status => void setStatus(task, status)} onEdit={() => startEdit(task)} />)}
           {visible.length === 0 && <div className="empty-state"><div className="empty-icon"><Check size={22} /></div><h3>Nothing due {selectedTaskDay === 0 ? 'today' : selectedTaskDay < 0 ? 'in the past' : selectedTaskDay === 1 ? 'tomorrow' : 'in 2 days'}.</h3><p>Future and other-day tasks are available in Calendar.</p></div>}
         </div>
         <div className="calendar-nudge compact-nudge"><div><CalendarDays size={17} /><div><strong>Explore other dates</strong><span>The calendar holds the complete task schedule.</span></div></div><button className="button button-light" onClick={() => setView('calendar')}>Open calendar <ArrowRight size={15} /></button></div>
@@ -441,14 +543,31 @@ export default function App() {
       {view === 'completed' && <>
         <div className="day-picker-header"><div><span className="eyebrow">PROGRESS, PRESERVED</span><h2>Completed work</h2><p>Your delivered tasks, without the clutter.</p></div></div>
         <div className="day-task-list task-list-simple">
-          {visible.map(task => <TaskCard key={task.id} task={task} selected={activeTaskId === task.id} director={director} onOpen={() => openTask(task)} onStatus={status => void setStatus(task, status)} onEdit={() => startEdit(task)} />)}
+          {visible.map((task, index) => <TaskCard key={task.id} colorIndex={index} task={task} selected={activeTaskId === task.id} director={director} onOpen={() => openTask(task)} onStatus={status => void setStatus(task, status)} onEdit={() => startEdit(task)} />)}
           {visible.length === 0 && <div className="empty-state"><div className="empty-icon"><Check size={22} /></div><h3>Nothing completed yet.</h3><p>Completed work will appear here.</p></div>}
         </div>
       </>}
       {activeTask && <div className="task-popover-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setActiveTaskId(null); }}>
-        <aside className="task-inspector task-dialog" role="dialog" aria-modal="true">{activeTask ? <><div className="inspector-top"><span className="eyebrow">TASK DETAILS</span><button className="icon-button" aria-label="Close details" onClick={() => setActiveTaskId(null)}><X size={17} /></button></div><h3 className="task-dialog-title">{activeTask.title}</h3><StatusPill value={effectiveStatus(activeTask)} /><p className="inspector-description">{activeTask.description || 'No description has been added.'}</p>{(activeTask.resource_urls?.length ? activeTask.resource_urls : activeTask.resource_url ? [activeTask.resource_url] : []).map((url, index) => <a className="resource-link" key={url + index} href={url} target="_blank" rel="noreferrer"><LinkIcon size={15} /> {activeTask.resource_urls && activeTask.resource_urls.length > 1 ? 'Task resource ' + (index + 1) : 'Open task resource'} <ExternalLink size={13} /></a>)}<div className="inspector-meta"><span><CalendarDays size={15} /> Release</span><strong>{dateLabel(activeTask.scheduled_at, true)}</strong><span><Clock3 size={15} /> Deadline</span><strong className={effectiveStatus(activeTask) === 'overdue' ? 'danger-text' : ''}>{dateLabel(activeTask.deadline_at, true)}</strong><span><Target size={15} /> Priority</span><strong>{priorityLabel(activeTask.priority)}</strong>{activeTask.repeat_unit && activeTask.repeat_unit !== 'none' && <><span><Repeat size={15} /> Repeats</span><strong>{activeTask.repeat_unit === 'monthly' ? 'Monthly · day ' + (activeTask.repeat_day_one || keyFor(activeTask.scheduled_at).split('-')[2]) + ((activeTask.repeat_monthly_count || 1) === 2 ? ' & ' + activeTask.repeat_day_two : '') : 'Every ' + (activeTask.repeat_every || 1) + ' ' + (activeTask.repeat_unit === 'daily' ? 'day' : 'week') + ((activeTask.repeat_every || 1) > 1 ? 's' : '')}{activeTask.repeat_until ? ' · until ' + dateLabel(activeTask.repeat_until) : ' · ongoing'}</strong></>}</div>{activeTask.status !== 'completed' && activeTask.status !== 'cancelled' && <div className="inspector-actions">{activeTask.status !== 'in_progress' && <button className="button button-light" onClick={() => void setStatus(activeTask, 'in_progress')}>Start task</button>}<button className="button button-dark" onClick={() => void setStatus(activeTask, 'completed')}><Check size={15} /> Mark complete</button></div>}{director && activeTask.status === 'completed' && <div className="inspector-actions"><button className="button button-light" onClick={() => void setStatus(activeTask, 'in_progress')}><Repeat size={15} /> Reopen task</button></div>}{director && <button className="edit-task-link" onClick={() => startEdit(activeTask)}>Edit task <ArrowRight size={14} /></button>}<div className="comments-heading"><MessageCircle size={16} /><strong>Team conversation</strong><span>{filteredComments.length}</span></div><div className="comment-list">{filteredComments.map(c => <div className="comment" key={c.id}><div className="comment-avatar">{(c.author_name || 'E').slice(0, 1)}</div><div><strong>{c.author_name || 'Ediova team'}</strong><small>{dateLabel(c.created_at, true)}</small><p>{c.body}</p></div></div>)}{filteredComments.length === 0 && <p className="muted-copy">No comments yet. Leave the first helpful note.</p>}</div><form className="comment-form" onSubmit={addComment}><input value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="Add a comment…" maxLength={4000} required /><button aria-label="Send comment"><ArrowRight size={16} /></button></form></> : <div className="inspector-empty"><div className="empty-icon"><MessageCircle size={22} /></div><h3>Select a task</h3><p>Open any task to view its brief, dates, resource links and team conversation.</p></div>}</aside>
+        <aside className="task-inspector task-dialog" role="dialog" aria-modal="true">{activeTask ? <><div className="inspector-top"><span className="eyebrow">TASK DETAILS</span><button className="icon-button" aria-label="Close details" onClick={() => setActiveTaskId(null)}><X size={17} /></button></div><h3 className="task-dialog-title">{activeTask.title}</h3><StatusPill value={effectiveStatus(activeTask)} /><p className="inspector-description">{activeTask.description || 'No description has been added.'}</p>{(activeTask.resource_urls?.length ? activeTask.resource_urls : activeTask.resource_url ? [activeTask.resource_url] : []).map((url, index) => <a className="resource-link" key={url + index} href={url} target="_blank" rel="noreferrer"><LinkIcon size={15} /> {activeTask.resource_urls && activeTask.resource_urls.length > 1 ? 'Task resource ' + (index + 1) : 'Open task resource'} <ExternalLink size={13} /></a>)}<div className="inspector-meta"><span><CalendarDays size={15} /> Release</span><strong>{dateLabel(activeTask.scheduled_at, true)}</strong><span><Clock3 size={15} /> Deadline</span><strong className={effectiveStatus(activeTask) === 'overdue' ? 'danger-text' : ''}>{dateLabel(activeTask.deadline_at, true)}</strong><span><Target size={15} /> Priority</span><strong>{priorityLabel(activeTask.priority)}</strong>{director && directorTaskHours[activeTask.id] != null && <><span><Clock3 size={15} /> Planned time</span><strong>{directorTaskHours[activeTask.id]} credited hours</strong></>}{activeTask.repeat_unit && activeTask.repeat_unit !== 'none' && <><span><Repeat size={15} /> Repeats</span><strong>{activeTask.repeat_unit === 'monthly' ? 'Monthly · day ' + (activeTask.repeat_day_one || keyFor(activeTask.scheduled_at).split('-')[2]) + ((activeTask.repeat_monthly_count || 1) === 2 ? ' & ' + activeTask.repeat_day_two : '') : 'Every ' + (activeTask.repeat_every || 1) + ' ' + (activeTask.repeat_unit === 'daily' ? 'day' : 'week') + ((activeTask.repeat_every || 1) > 1 ? 's' : '')}{activeTask.repeat_until ? ' · until ' + dateLabel(activeTask.repeat_until) : ' · ongoing'}</strong></>}</div>{activeTask.status !== 'completed' && activeTask.status !== 'cancelled' && <div className="inspector-actions">{activeTask.status !== 'in_progress' && <button className="button button-light" onClick={() => void setStatus(activeTask, 'in_progress')}>Start task</button>}<button className="button button-dark" onClick={() => void setStatus(activeTask, 'completed')}><Check size={15} /> Mark complete</button></div>}{director && activeTask.status === 'completed' && <div className="inspector-actions"><button className="button button-light" onClick={() => void setStatus(activeTask, 'in_progress')}><Repeat size={15} /> Reopen task</button></div>}{director && <button className="edit-task-link" onClick={() => startEdit(activeTask)}>Edit task <ArrowRight size={14} /></button>}<div className="comments-heading"><MessageCircle size={16} /><strong>Team conversation</strong><span>{filteredComments.length}</span></div><div className="comment-list">{filteredComments.map(c => <div className="comment" key={c.id}><div className="comment-avatar">{(c.author_name || 'E').slice(0, 1)}</div><div><strong>{c.author_name || 'Ediova team'}</strong><small>{dateLabel(c.created_at, true)}</small><p>{c.body}</p></div></div>)}{filteredComments.length === 0 && <p className="muted-copy">No comments yet. Leave the first helpful note.</p>}</div><form className="comment-form" onSubmit={addComment}><input value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="Add a comment…" maxLength={4000} required /><button aria-label="Send comment"><ArrowRight size={16} /></button></form></> : <div className="inspector-empty"><div className="empty-icon"><MessageCircle size={22} /></div><h3>Select a task</h3><p>Open any task to view its brief, dates, resource links and team conversation.</p></div>}</aside>
       </div>}
-      {view === 'performance' && <section className="performance-page"><div className="performance-heading"><span className="eyebrow">ON-TIME WORK, MADE VISIBLE</span><h2>{director ? 'Manager performance.' : 'Your performance.'}</h2><p>Every full day past a deadline deducts 10 points automatically. Scores update as overdue tasks age and when tasks are completed.</p></div><div className="performance-grid">{performanceRows.filter(row => director || row.manager_id === profile?.id).map(row => <article className="performance-card" key={row.manager_id}><div className="performance-card-top"><div className="performance-avatar">{row.manager_name.slice(0,1)}</div><div><h3>{row.manager_name}</h3><span>{row.location || 'Ediova Manager'}</span></div><strong className={row.performance_score < 70 ? 'score-low' : row.performance_score < 90 ? 'score-mid' : 'score-high'}>{row.performance_score}<small>/100</small></strong></div><div className="score-track"><i style={{width: row.performance_score + '%'}} /></div><div className="performance-stats"><span><strong>{row.assigned_tasks}</strong> Assigned</span><span><strong>{row.completed_tasks}</strong> Completed</span><span><strong>{row.delayed_tasks}</strong> Delayed</span></div><p className="performance-note">{row.delayed_tasks ? row.delayed_tasks + ' task(s) are overdue or were completed late.' : 'No late tasks recorded.'}</p></article>)}{performanceRows.filter(row => director || row.manager_id === profile?.id).length === 0 && <div className="empty-state"><h3>Performance data is loading.</h3><p>Assign tasks and record completions to build the score.</p></div>}</div></section>}
+      {view === 'performance' && <section className="performance-page">
+        <div className="performance-heading"><span className="eyebrow">PROGRESS, MADE VISIBLE</span><h2>{director ? 'Manager performance.' : 'Your performance.'}</h2><p>Monthly task completions and credited hours update automatically when completed work is recorded. The Manager sees monthly totals only; task-level hour targets remain private to the Managing Director.</p></div>
+        <div className="performance-month-filter"><label>Reporting month<input type="month" value={performanceMonth} onChange={e => setPerformanceMonth(e.target.value)} /></label><span>{new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date(performanceMonth + '-01T12:00:00Z'))}</span></div>
+        <div className="monthly-output-grid">
+          <article className="monthly-output-card monthly-output-green"><span>COMPLETED THIS MONTH</span><strong>{monthlyPerformanceRows.filter(row => director || row.manager_id === profile?.id).reduce((total, row) => total + Number(row.completed_tasks || 0), 0)}</strong><small>tasks delivered</small></article>
+          <article className="monthly-output-card monthly-output-blue"><span>HOURS CREDITED</span><strong>{monthlyPerformanceRows.filter(row => director || row.manager_id === profile?.id).reduce((total, row) => total + Number(row.completed_hours || 0), 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}</strong><small>director-assigned hours on completed tasks</small></article>
+        </div>
+        <div className="performance-grid">{performanceRows.filter(row => director || row.manager_id === profile?.id).map(row => {
+          const month = monthlyPerformanceRows.find(item => item.manager_id === row.manager_id);
+          return <article className="performance-card" key={row.manager_id}>
+            <div className="performance-card-top"><div className="performance-avatar">{row.manager_name.slice(0,1)}</div><div><h3>{row.manager_name}</h3><span>{row.location || 'Ediova Manager'}</span></div><strong className={row.performance_score < 70 ? 'score-low' : row.performance_score < 90 ? 'score-mid' : 'score-high'}>{row.performance_score}<small>/100</small></strong></div>
+            <div className="score-track"><i style={{width: row.performance_score + '%'}} /></div>
+            <div className="performance-stats"><span><strong>{row.assigned_tasks}</strong> Assigned</span><span><strong>{row.completed_tasks}</strong> Completed overall</span><span><strong>{row.delayed_tasks}</strong> Delayed</span></div>
+            <div className="monthly-manager-stats"><div><span>Tasks this month</span><strong>{month ? Number(month.completed_tasks) : 0}</strong></div><div><span>Hours credited this month</span><strong>{month ? Number(month.completed_hours).toLocaleString('en-US', { maximumFractionDigits: 2 }) : '0'} <small>hrs</small></strong></div></div>
+            <p className="performance-note">{row.delayed_tasks ? row.delayed_tasks + ' task(s) are overdue or were completed late.' : 'No late tasks recorded.'} Scores still deduct 10 points per full day late.</p>
+          </article>;
+        })}{performanceRows.filter(row => director || row.manager_id === profile?.id).length === 0 && <div className="empty-state"><h3>Performance data is loading.</h3><p>Assign tasks and record completions to build the score.</p></div>}</div>
+      </section>}
       {view === 'calendar' && <section className="calendar-panel"><div className="calendar-heading"><div><span className="eyebrow">MAKE TIME FOR THE WORK</span><h2>{monthTitle}</h2></div><div className="calendar-paging"><button className="icon-button" onClick={() => monthShift(-1)} aria-label="Previous month"><ChevronLeft /></button><button className="icon-button" onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>Today</button><button className="icon-button" onClick={() => monthShift(1)} aria-label="Next month"><ChevronRight /></button></div></div><div className="calendar-week">{['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map(d => <span key={d}>{d}</span>)}</div><div className="calendar-grid">{calendarCells.map((day, i) => { const key = day ? calendarMonth.getFullYear() + '-' + String(calendarMonth.getMonth() + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0') : 'blank-' + i; const items = day ? released.filter(t => keyFor(t.scheduled_at) === key && t.status !== 'cancelled' && t.status !== 'archived') : []; return <div className={'calendar-day' + (!day ? ' blank' : '') + (day && key === todayKey() ? ' is-today' : '')} key={key}><span className="calendar-day-num">{day || ''}</span>{items.slice(0, 3).map(t => <button key={t.id} className={'calendar-event ' + (effectiveStatus(t) === 'overdue' ? 'event-late' : 'event-' + t.status)} onClick={() => { setView('dashboard'); openTask(t); }} title={t.title}>{t.title}</button>)}{items.length > 3 && <small>+{items.length - 3} more</small>}</div>; })}</div></section>}
       {view === 'profile' && <section className="profile-page"><div className="profile-copy"><span className="eyebrow">THE PERSON BEHIND THE WORK</span><h2>Your profile,<br /><em>your place here.</em></h2><p>Clear ownership and thoughtful communication help good work move forward.</p><div className="profile-details"><span>NAME</span><strong>{profile?.full_name || 'Preview member'}</strong><span>ROLE</span><strong>{roleLabel(role)}</strong><span>LOCATION</span><strong>{profile?.location || (role === 'manager' ? 'Islamabad, Pakistan' : 'Ediova')}</strong><span>EXPERIENCE</span><strong>{profile?.experience || (role === 'manager' ? '2+ years' : 'Leadership')}</strong></div></div><button className={'profile-flip' + (flip ? ' flipped' : '')} onClick={() => setFlip(!flip)} aria-label="Flip profile card"><div className="flip-inner"><div className="flip-front"><span className="float-index">EDI OVA / TEAM CARD</span><div className="profile-symbol">{(profile?.full_name || 'E').slice(0, 1)}</div><h3>{profile?.full_name || 'Ediova member'}</h3><p>{roleLabel(role)}</p><div className="flip-hint">CLICK TO FLIP <ArrowRight size={13} /></div></div><div className="flip-back"><ShieldCheck size={33} /><span className="eyebrow">ACCESS VERIFIED</span><h3>{director ? 'DIRECTOR-LEVEL ACCESS' : 'MANAGER-LEVEL ACCESS'}</h3><p>Role permissions are enforced by your signed-in account and database policies.</p><span className="flip-hint">CLICK TO RETURN</span></div></div></button></section>}
       {view === 'policies' && <InfoPage icon={<FileText size={22} />} eyebrow="HOW WE WORK" title="Company policies." body="We work with care, own our commitments and keep communication useful. Each task should have a clear brief, a realistic deadline and one obvious place for updates. Respect agreed schedules, protect client material, use approved links, and flag blockers early rather than silently missing a deadline." list={['Treat client and company information as confidential.','Keep task comments professional, clear and constructive.','Only share deliverables through approved resources and channels.','Raise timeline risks as soon as you see them.']} />}
@@ -457,18 +576,31 @@ export default function App() {
       </section>
       {teamModal && <div className="modal-backdrop team-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setTeamModal(false); }}><section className="team-modal" role="dialog" aria-modal="true" aria-labelledby="team-modal-title"><div className="modal-heading"><div><span className="eyebrow">THE PEOPLE BEHIND THE WORK</span><h2 id="team-modal-title">Ediova team.</h2></div><button type="button" className="icon-button" onClick={() => setTeamModal(false)} aria-label="Close team"><X /></button></div><div className="team-directory-grid">{teamDirectory.slice().sort((a,b)=>a.sort_order-b.sort_order).map((member,index)=><article className="team-person-card" key={member.id}><div className={'team-person-avatar team-avatar-'+(index%4)}>{member.full_name.split(/\s+/).map(part=>part[0]).slice(0,2).join('')}</div><div><h3>{member.full_name}</h3><span>{member.job_title}</span><p>{member.location}</p></div><span className="team-person-number">0{index+1}</span></article>)}</div><p className="team-modal-foot">Ediova Inc. · Yogyakarta, Indonesia</p></section></div>}
       {noticeComposer && director && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setNoticeComposer(false); }}><form className="task-modal notice-modal" onSubmit={publishDashboardNotice}><div className="modal-heading"><div><span className="eyebrow">TEAM COMMUNICATION</span><h2>Post a notice.</h2></div><button type="button" className="icon-button" onClick={() => setNoticeComposer(false)} aria-label="Close"><X /></button></div><label>Notice heading<input required maxLength={120} value={noticeTitleDraft} onChange={e => setNoticeTitleDraft(e.target.value)} placeholder="A quick update for everyone" /></label><label>Message<textarea required rows={4} maxLength={2000} value={noticeBodyDraft} onChange={e => setNoticeBodyDraft(e.target.value)} placeholder="Write the announcement that should appear at the top of every dashboard." /></label><div className="modal-actions"><button type="button" className="button button-light" onClick={() => setNoticeComposer(false)}>Cancel</button><button className="button button-dark"><Bell size={15} /> Publish notice</button></div></form></div>}
-      {composer && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setComposer(false); }}><form className="task-modal" onSubmit={saveTask}><div className="modal-heading"><div><span className="eyebrow">{editing ? 'UPDATE THE BRIEF' : 'MAKE IT HAPPEN'}</span><h2>{editing ? 'Edit task.' : 'Create a task.'}</h2></div><button type="button" className="icon-button" onClick={() => setComposer(false)} aria-label="Close"><X /></button></div><label>Task title<input required maxLength={180} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="Give the work a clear name" /></label><label>Description<textarea required rows={4} maxLength={10000} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="What needs to happen? Add the useful details." /></label><div className="form-two"><label>Release date &amp; time<input type="datetime-local" required value={draft.scheduled} onChange={e => setDraft({ ...draft, scheduled: e.target.value })} /></label><label>Deadline<input type="datetime-local" required value={draft.deadline} onChange={e => setDraft({ ...draft, deadline: e.target.value })} /></label></div><div className="form-two"><label>Priority<select value={draft.priority} onChange={e => setDraft({ ...draft, priority: e.target.value as Priority })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label><label>Assign to<select value={draft.assignee || managerId} onChange={e => setDraft({ ...draft, assignee: e.target.value })}>{(team.filter(p => p.role === 'manager').length ? team.filter(p => p.role === 'manager') : [managerDemo]).map(p => <option value={p.id} key={p.id}>{p.full_name}</option>)}</select></label></div><label>Task resource links <span className="optional-label">OPTIONAL · ONE URL PER LINE</span><textarea rows={2} value={draft.resource} onChange={e => setDraft({ ...draft, resource: e.target.value })} placeholder="One URL per line" /></label>
-          {editing?.recurrence_parent_id ? <p className="recurrence-note">This occurrence belongs to a repeating series. Edit the original task to change its schedule.</p> : <div className="repeat-controls"><label>Repeat<select value={draft.repeatUnit} onChange={e => setDraft({ ...draft, repeatUnit: e.target.value as RepeatUnit })}><option value="none">Never</option><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Each month</option></select></label>{draft.repeatUnit === 'monthly' ? <><label>Occurrences each month<select value={String(draft.repeatMonthlyCount)} onChange={e => setDraft({ ...draft, repeatMonthlyCount: Number(e.target.value) as RepeatMonthlyCount })}><option value="1">Once a month</option><option value="2">Twice a month</option></select></label><label>Day of month<select value={String(draft.repeatDayOne)} onChange={e => setDraft({ ...draft, repeatDayOne: Number(e.target.value) })}>{Array.from({length:31},(_,i)=>i+1).map(day => <option value={day} key={day}>{day}</option>)}</select></label>{draft.repeatMonthlyCount === 2 && <label>Second day<select value={String(draft.repeatDayTwo)} onChange={e => setDraft({ ...draft, repeatDayTwo: Number(e.target.value) })}>{Array.from({length:31},(_,i)=>i+1).filter(day => day !== draft.repeatDayOne).map(day => <option value={day} key={day}>{day}</option>)}</select></label>}</> : draft.repeatUnit !== 'none' && <label>Repeat every <span className="optional-label">INTERVAL</span><input type="number" min={1} max={365} step={1} required value={draft.repeatEvery} onChange={e => setDraft({ ...draft, repeatEvery: Math.max(1, Math.min(365, Number(e.target.value) || 1)) })} /></label>}{draft.repeatUnit !== 'none' && <label className="repeat-until-field">Repeat until <span className="optional-label">OPTIONAL</span><input type="date" value={draft.repeatUntil.slice(0,10)} onChange={e => setDraft({ ...draft, repeatUntil: e.target.value ? e.target.value + 'T23:59' : '' })} min={draft.scheduled.slice(0,10)} /></label>}{draft.repeatUnit !== 'none' && <p className="recurrence-note">Monthly tasks are created on selected calendar dates. Managers only see each occurrence after its release time.</p>}</div>}<div className="modal-actions"><button type="button" className="button button-light" onClick={() => setComposer(false)}>Cancel</button><button className="button button-dark"><Check size={16} /> {editing ? 'Save changes' : 'Schedule task'}</button></div><p className="form-time-note">All times are interpreted as Pakistan Standard Time (UTC+05:00).</p></form></div>}
+      {composer && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setComposer(false); }}><form className="task-modal" onSubmit={saveTask}><div className="modal-heading"><div><span className="eyebrow">{editing ? 'UPDATE THE BRIEF' : 'MAKE IT HAPPEN'}</span><h2>{editing ? 'Edit task.' : 'Create a task.'}</h2></div><button type="button" className="icon-button" onClick={() => setComposer(false)} aria-label="Close"><X /></button></div><label>Task title<input required maxLength={180} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="Give the work a clear name" /></label><label>Description<textarea required rows={4} maxLength={10000} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="What needs to happen? Add the useful details." /></label><div className="form-two"><label>Release date &amp; time<input type="datetime-local" required value={draft.scheduled} onChange={e => setDraft({ ...draft, scheduled: e.target.value })} /></label><label>Deadline<input type="datetime-local" required value={draft.deadline} onChange={e => setDraft({ ...draft, deadline: e.target.value })} /></label></div><div className="form-two"><label>Priority<select value={draft.priority} onChange={e => setDraft({ ...draft, priority: e.target.value as Priority })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label><label>Assign to<select value={draft.assignee || managerId} onChange={e => setDraft({ ...draft, assignee: e.target.value })}>{(team.filter(p => p.role === 'manager').length ? team.filter(p => p.role === 'manager') : [managerDemo]).map(p => <option value={p.id} key={p.id}>{p.full_name}</option>)}</select></label></div>{director && <label>Hours credited when completed <span className="optional-label">PRIVATE TO MANAGING DIRECTOR</span><input type="number" min="0.25" max="1000" step="0.25" value={draft.targetHours} onChange={e => setDraft({ ...draft, targetHours: e.target.value })} placeholder="For example, 3.5" /><span className="field-hint">Added to monthly performance only when this task is completed. Managers cannot see task-level hour targets.</span></label>}<label>Task resource links <span className="optional-label">OPTIONAL · ONE URL PER LINE</span><textarea rows={2} value={draft.resource} onChange={e => setDraft({ ...draft, resource: e.target.value })} placeholder="One URL per line" /></label>
+          {editing?.recurrence_parent_id ? <p className="recurrence-note">This occurrence belongs to a repeating series. Edit the original task to change its schedule.</p> : <div className="repeat-controls">
+            <label>Repeat<select value={draft.repeatUnit} onChange={e => setDraft({ ...draft, repeatUnit: e.target.value as RepeatUnit })}><option value="none">Never</option><option value="daily">Every day</option><option value="weekly">Weekly on selected days</option><option value="monthly">Each month</option></select></label>
+            {draft.repeatUnit === 'monthly' ? <>
+              <label>Occurrences each month<select value={String(draft.repeatMonthlyCount)} onChange={e => setDraft({ ...draft, repeatMonthlyCount: Number(e.target.value) as RepeatMonthlyCount })}><option value="1">Once a month</option><option value="2">Twice a month</option></select></label>
+              <label>Day of month<select value={String(draft.repeatDayOne)} onChange={e => setDraft({ ...draft, repeatDayOne: Number(e.target.value) })}>{Array.from({length:31},(_,i)=>i+1).map(day => <option value={day} key={day}>{day}</option>)}</select></label>
+              {draft.repeatMonthlyCount === 2 && <label>Second day<select value={String(draft.repeatDayTwo)} onChange={e => setDraft({ ...draft, repeatDayTwo: Number(e.target.value) })}>{Array.from({length:31},(_,i)=>i+1).filter(day => day !== draft.repeatDayOne).map(day => <option value={day} key={day}>{day}</option>)}</select></label>}
+            </> : draft.repeatUnit === 'weekly' ? <>
+              <label>Repeat interval<select value={String(draft.repeatEvery)} onChange={e => setDraft({ ...draft, repeatEvery: Number(e.target.value) })}><option value="1">Every week</option><option value="2">Every 2 weeks</option></select></label>
+              <div className="repeat-weekdays"><span className="optional-label">SHOW THIS TASK ON</span><div className="weekday-options">{[{day:1,label:'Mon'},{day:2,label:'Tue'},{day:3,label:'Wed'},{day:4,label:'Thu'},{day:5,label:'Fri'},{day:6,label:'Sat'},{day:7,label:'Sun'}].map(item => <label className="weekday-option" key={item.day}><input type="checkbox" checked={draft.repeatDays.includes(item.day)} onChange={e => setDraft({ ...draft, repeatDays: e.target.checked ? [...draft.repeatDays, item.day].sort((a,b) => a-b) : draft.repeatDays.filter(day => day !== item.day) })} /><span>{item.label}</span></label>)}</div></div>
+            </> : draft.repeatUnit === 'daily' && <label>Repeat every <span className="optional-label">INTERVAL · DAYS</span><input type="number" min={1} max={365} step={1} required value={draft.repeatEvery} onChange={e => setDraft({ ...draft, repeatEvery: Math.max(1, Math.min(365, Number(e.target.value) || 1)) })} /></label>}
+            {draft.repeatUnit !== 'none' && <label className="repeat-until-field">Repeat until <span className="optional-label">OPTIONAL</span><input type="date" value={draft.repeatUntil.slice(0,10)} onChange={e => setDraft({ ...draft, repeatUntil: e.target.value ? e.target.value + 'T23:59' : '' })} min={draft.scheduled.slice(0,10)} /></label>}
+            {draft.repeatUnit !== 'none' && <p className="recurrence-note">{draft.repeatUnit === 'weekly' ? 'Select one or more weekdays. The first task is aligned to the next selected day; repeats default to 12:00 AM Pakistan time.' : 'Repeat occurrences preserve the task time and deadline window. Managers see each occurrence after its release time.'}</p>}
+          </div>}
+          <div className="modal-actions"><button type="button" className="button button-light" onClick={() => setComposer(false)}>Cancel</button><button className="button button-dark"><Check size={16} /> {editing ? 'Save changes' : 'Schedule task'}</button></div><p className="form-time-note">All times are interpreted as Pakistan Standard Time (UTC+05:00).</p></form></div>}
       {notice && <div className="toast" role="status">{notice}</div>}
     </main>
   );
 }
 
-function TaskCard({ task, selected, director, onOpen, onStatus, onEdit }: { task: Task; selected: boolean; director: boolean; onOpen: () => void; onStatus: (s: Status) => void; onEdit: () => void }) {
-  return <article className={'task-card compact-task' + (selected ? ' chosen' : '')}>
+function TaskCard({ task, selected, director, colorIndex, onOpen, onStatus, onEdit }: { task: Task; selected: boolean; director: boolean; colorIndex: number; onOpen: () => void; onStatus: (s: Status) => void; onEdit: () => void }) {
+  return <article className={'task-card compact-task task-tone-' + (colorIndex % 8) + (selected ? ' chosen' : '')}>
     <button className="task-open" onClick={onOpen} aria-label={'Open task: ' + task.title}>
-      <div className="compact-task-main"><h3>{task.title}</h3></div>
-      <div className="compact-task-due"><Clock3 size={14} /><span>Due {dateLabel(task.deadline_at, true)}</span><ArrowRight size={15} /></div>
+      <div className="compact-task-main"><span className="task-card-number">{String(colorIndex + 1).padStart(2, '0')}</span><div className="task-card-copy"><h3>{task.title}</h3><div className="task-card-tags"><StatusPill value={effectiveStatus(task)} /><span className={'priority-chip priority-' + task.priority}>{priorityLabel(task.priority)}</span></div></div></div>
+      <div className="compact-task-due"><span className="task-due-caption">DUE</span><strong>{dateLabel(task.deadline_at, true)}</strong><ArrowRight size={16} /></div>
     </button>
   </article>;
 }
