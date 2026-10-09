@@ -1,23 +1,20 @@
 # Ediova Workspace
 
-A separate web workspace for Ediova: a polished public-facing landing page plus a two-role internal task management area.
+Ediova's website and private, two-role team task workspace. Built with React, TypeScript, Vite and Supabase.
 
-## Product scope
+## What's in this repository
 
-- Company landing page with animated project elements, Careers and Login entry points.
+- Public-facing landing page with animated creative project cards, Careers contact link and team login.
 - Exactly two access roles: **01 Manager** and **02 Managing Director**.
-- Manager workspace for assigned tasks, release-date visibility, deadlines, overdue indicators, task links, comments, calendar, completed history and profile.
-- Managing Director workspace for creating, scheduling, editing and assigning tasks, setting priorities and deadlines, and reviewing task status and activity.
-- Default task time zone: **Asia/Karachi (UTC+05:00)**.
-- Responsive layout, accessible keyboard controls and reduced-motion support.
+- Manager workspace: released assigned tasks, deadlines and overdue states, links, comments, calendar, completed history and a flippable profile card for Umna Haroon.
+- Director workspace: create, schedule, edit and assign tasks, set priorities and deadlines, review task status, comments and calendar.
+- Default timezone: **Asia/Karachi (UTC+05:00)**.
+- Supabase schema and row-level security policies for shared task persistence.
+- GitHub Actions build workflow and an optional Pages deployment step.
 
-## Important status
+The official Ediova logo was not provided in this connected context. The SVG mark and coral / ink / lilac / sage palette are **provisional**; replace and tune them against the official brand asset before launch.
 
-This repository is being initialized. The official Ediova logo asset was not provided in the connected context, so any included monogram and palette are provisional until the official asset is added.
-
-The site must not be treated as production-ready until the backend is configured, the database migration is applied, and both roles' access restrictions are tested. Demo/preview mode is local to a browser and does **not** synchronize task data between users.
-
-## Local development
+## Run locally
 
 Requires Node.js 22 or newer.
 
@@ -26,43 +23,56 @@ npm install
 npm run dev
 ```
 
-## Shared data and authentication (Supabase)
+Without Supabase environment variables the site opens in **Preview mode** with sample tasks. Preview changes persist only in the current browser and are **not shared** with another user or device. Use this mode for interface evaluation, not real task management.
+
+## Configure real authentication and shared tasks
 
 1. Create a Supabase project.
-2. Run the SQL migration in `supabase/migrations/` using Supabase SQL Editor.
-3. In Supabase Authentication, create/invite the Manager and Managing Director accounts; disable public sign-up.
-4. Provision each account's profile row using the authenticated user's actual UUID and the correct role. Do not allow a browser user to assign or change their own role.
-5. Configure `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` as repository Actions secrets for deployment and as local `.env.local` values for development.
-6. Validate RLS and task scheduling using both accounts before putting real company information into the service.
+2. In Supabase SQL Editor, run `supabase/migrations/202610090001_initial_schema.sql`.
+3. In Supabase Authentication, create/invite one account for Umna Haroon (Manager) and one for the Managing Director. Disable public sign-up.
+4. Copy each account's real Auth user UUID.
+5. As a trusted administrator in SQL Editor, provision their profile rows with those UUIDs (replace both placeholders first):
 
-Never expose a Supabase service-role key in browser code, `VITE_*` variables, or committed files. Only a public anon/publishable key belongs in the frontend; database RLS is responsible for authorization.
+```sql
+insert into public.profiles (id, full_name, role, location, experience)
+values
+  ('REPLACE_WITH_UMNA_AUTH_UUID', 'Umna Haroon', 'manager', 'Islamabad, Pakistan', '2+ years'),
+  ('REPLACE_WITH_DIRECTOR_AUTH_UUID', 'Managing Director', 'managing_director', null, null);
+```
 
-## Build checks
+If a profile row already exists, update it rather than inserting a duplicate. The role must be granted by a trusted administrator, never by the browser user.
+
+6. In the local environment, copy `.env.example` to `.env.local` and enter your project's URL and public anon/publishable key.
+7. For a hosted build, add repository **Actions secrets** named `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+8. Test both accounts. Confirm Managers cannot read tasks before release, edit task content or deadlines, assign work, or access Director functions. Confirm updates and comments persist across devices.
+
+**Never** place a Supabase service-role key in frontend code or any `VITE_*` variable. Browser environment values are public; database row-level security is the authorization boundary.
+
+## Build and type-check
 
 ```bash
 npm run typecheck
 npm run build
+npm run preview
 ```
 
-## Deployment
+## GitHub Actions and Pages
 
-The repository includes a GitHub Actions workflow for GitHub Pages. In **Settings → Pages**, select **GitHub Actions** as the build source. Add the two Supabase values under **Settings → Secrets and variables → Actions** after configuring Supabase.
+Every push to `main` runs the TypeScript check and production build. A build artifact is retained for inspection/download.
 
-GitHub Pages access for a private repository depends on the GitHub plan and repository settings. If Pages is unavailable for this private repository, keep the repository private and deploy the static frontend through an appropriate connected hosting provider rather than changing repository visibility without approval.
+To publish with GitHub Pages:
 
-## Security and launch checklist
+1. Open **Settings → Pages** and enable **GitHub Actions** as the source.
+2. Add the two Supabase Actions secrets only after configuring Supabase.
+3. Add a repository Actions **variable** named `ENABLE_GITHUB_PAGES` with value `true`.
 
-- Test that Managers cannot read unreleased/future tasks or access Director controls.
-- Test that Managers cannot edit task content, deadlines, priority or assignment.
-- Test schedule and deadline boundaries in Asia/Karachi time.
-- Confirm persistent task updates and comments across devices.
-- Review the company policies and privacy notice against actual practices.
-- Add backups/retention, monitoring and incident-response procedures.
-- Replace the provisional mark and verify brand colors against Ediova's official logo.
+The connection used in the assistant session can push repository files but cannot enable the Pages site through GitHub's Pages settings API. That one-time setting must be completed in the repository UI. Do not make this private repository public just to work around it; if Pages is unavailable for the current plan, keep the repo private and use an approved hosting provider.
 
-## Main areas
+## Production checklist
 
-- `src/` — frontend
-- `public/` — static assets
-- `supabase/migrations/` — database schema and authorization policies
-- `.github/workflows/` — build/deployment automation
+- Replace the provisional logo and verify all colors against Ediova's official brand asset.
+- Apply the SQL migration and create the two real Auth accounts.
+- Validate RLS and schedule/deadline behavior for both roles in Asia/Karachi time.
+- Configure a trusted backup and retention plan, and review monitoring.
+- Replace draft privacy and company-policy copy with language matching actual business practices.
+- Do not put client secrets or sensitive client data into task descriptions/comments unless the chosen hosting and retention policy explicitly supports it.
