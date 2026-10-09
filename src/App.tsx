@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronLeft, ChevronRight,
   Clock3, ExternalLink, FileText, LayoutDashboard, Link as LinkIcon, LockKeyhole, LogOut,
-  MessageCircle, Plus, Repeat, Search, ShieldCheck, Sparkles, Target, UserRound, Users, X,
+  BarChart3, Bell, MessageCircle, Plus, Repeat, Search, ShieldCheck, Sparkles, Target, UserRound, Users, X,
 } from 'lucide-react';
 import type { Session } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
@@ -11,19 +11,36 @@ type Role = 'manager' | 'managing_director';
 type Status = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'archived';
 type RepeatUnit = 'none' | 'daily' | 'weekly' | 'monthly';
 type Priority = 'low' | 'normal' | 'high' | 'urgent';
-type View = 'dashboard' | 'tasks' | 'calendar' | 'completed' | 'profile' | 'policies' | 'privacy';
+type View = 'dashboard' | 'tasks' | 'calendar' | 'completed' | 'performance' | 'profile' | 'policies' | 'privacy';
 type Profile = { id: string; full_name: string; role: Role; location?: string | null; experience?: string | null };
+type TeamMember = { id: string; full_name: string; job_title: string; location: string; sort_order: number; profile_id?: string | null };
+type CompanyNotice = { id: string; title: string; body: string; created_by: string; created_at: string; is_active: boolean; expires_at?: string | null };
+type PerformanceRow = { manager_id: string; manager_name: string; location?: string | null; assigned_tasks: number; completed_tasks: number; delayed_tasks: number; penalty_points: number; performance_score: number };
+type RepeatMonthlyCount = 1 | 2;
 type Task = {
   id: string; title: string; description: string; scheduled_at: string; deadline_at: string;
   priority: Priority; status: Status; resource_url?: string | null; resource_urls?: string[]; assignee_id?: string | null;
   created_by?: string | null; completed_at?: string | null; updated_at?: string;
   repeat_unit?: RepeatUnit; repeat_every?: number; repeat_until?: string | null; recurrence_parent_id?: string | null;
+  repeat_monthly_count?: RepeatMonthlyCount; repeat_day_one?: number | null; repeat_day_two?: number | null;
 };
 type Comment = { id: string; task_id: string; author_id: string; body: string; created_at: string; author_name?: string };
-type Draft = { title: string; description: string; scheduled: string; deadline: string; priority: Priority; resource: string; assignee: string; repeatUnit: RepeatUnit; repeatEvery: number; repeatUntil: string };
+type Draft = { title: string; description: string; scheduled: string; deadline: string; priority: Priority; resource: string; assignee: string; repeatUnit: RepeatUnit; repeatEvery: number; repeatUntil: string; repeatMonthlyCount: RepeatMonthlyCount; repeatDayOne: number; repeatDayTwo: number };
 
 const managerDemo: Profile = { id: 'demo-manager', full_name: 'Umna Haroon', role: 'manager', location: 'Islamabad, Pakistan', experience: '2+ years' };
-const directorDemo: Profile = { id: 'demo-director', full_name: 'Managing Director', role: 'managing_director' };
+const directorDemo: Profile = { id: 'demo-director', full_name: 'Hamza Mubarak', role: 'managing_director', location: 'Yogyakarta, Indonesia' };
+const TEAM_FALLBACK: TeamMember[] = [
+  { id: 'hamza-mubarak', full_name: 'Hamza Mubarak', job_title: 'Managing Director', location: 'Yogyakarta, Indonesia', sort_order: 1, profile_id: 'f47dccdf-0da3-45c6-85bd-9f6401872692' },
+  { id: 'humna-haroon', full_name: 'Humna Haroon', job_title: 'Manager', location: 'Islamabad, Pakistan', sort_order: 2, profile_id: 'b46129c6-cbf4-4d47-8d84-f592e36645f8' },
+  { id: 'syed-shaheer', full_name: 'Syed Shaheer', job_title: 'Senior Video Editor', location: 'Faisalabad, Pakistan', sort_order: 3 },
+  { id: 'muhammad-hammad', full_name: 'Muhammad Hammad', job_title: 'Anime Expert', location: 'Aceh, Indonesia', sort_order: 4 },
+  { id: 'ahmer-munir', full_name: 'Ahmer Munir', job_title: 'Truvision Studio', location: 'Hafizabad, Pakistan', sort_order: 5 },
+  { id: 'ahmer-khan', full_name: 'Ahmer Khan', job_title: 'Junior Video Editor', location: 'Karachi, Pakistan', sort_order: 6 },
+  { id: 'salman-asghar', full_name: 'Salman Asghar', job_title: 'Journal Writing', location: 'Sialkot, Pakistan', sort_order: 7 },
+];
+const turnstileSiteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) || '';
+type TurnstileApi = { render: (container: HTMLElement, options: Record<string, unknown>) => string; remove: (id: string) => void };
+declare global { interface Window { turnstile?: TurnstileApi } }
 const TASK_KEY = 'ediova-workspace-demo-tasks-v1';
 const COMMENT_KEY = 'ediova-workspace-demo-comments-v1';
 const hour = (n: number) => new Date(Date.now() + n * 3600000).toISOString();
@@ -51,9 +68,12 @@ function fromDatabaseTask(row: Record<string, unknown>): Task {
     repeat_every: Number(row.repeat_every ?? 1),
     repeat_until: typeof row.repeat_until === 'string' ? row.repeat_until : null,
     recurrence_parent_id: typeof row.recurrence_parent_id === 'string' ? row.recurrence_parent_id : null,
+    repeat_monthly_count: Number(row.repeat_monthly_count ?? 1) === 2 ? 2 : 1,
+    repeat_day_one: row.repeat_day_one == null ? null : Number(row.repeat_day_one),
+    repeat_day_two: row.repeat_day_two == null ? null : Number(row.repeat_day_two),
   };
 }
-function toDatabaseTask(changes: { title: string; description: string; scheduled_at: string; deadline_at: string; priority: Priority; resource_url: string | null; assignee_id: string; repeat_unit: RepeatUnit; repeat_every: number; repeat_until: string | null }): Record<string, unknown> {
+function toDatabaseTask(changes: { title: string; description: string; scheduled_at: string; deadline_at: string; priority: Priority; resource_url: string | null; assignee_id: string; repeat_unit: RepeatUnit; repeat_every: number; repeat_until: string | null; repeat_monthly_count: RepeatMonthlyCount; repeat_day_one: number | null; repeat_day_two: number | null }): Record<string, unknown> {
   const { scheduled_at, priority, resource_url, ...rest } = changes;
   return {
     ...rest,
@@ -114,6 +134,15 @@ export default function App() {
   const [screen, setScreen] = useState<'landing' | 'login' | 'workspace'>('landing');
   const [selectedTaskDay, setSelectedTaskDay] = useState(0);
   const [logoTransition, setLogoTransition] = useState(false);
+  const [teamDirectory, setTeamDirectory] = useState<TeamMember[]>(TEAM_FALLBACK);
+  const [teamModal, setTeamModal] = useState(false);
+  const [dashboardNotice, setDashboardNotice] = useState<CompanyNotice | null>(null);
+  const [noticeComposer, setNoticeComposer] = useState(false);
+  const [noticeTitleDraft, setNoticeTitleDraft] = useState('');
+  const [noticeBodyDraft, setNoticeBodyDraft] = useState('');
+  const [performanceRows, setPerformanceRows] = useState<PerformanceRow[]>([]);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const captchaHost = useRef<HTMLDivElement | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [team, setTeam] = useState<Profile[]>([]);
@@ -132,7 +161,7 @@ export default function App() {
   const [commentDraft, setCommentDraft] = useState('');
   const [composer, setComposer] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
-  const [draft, setDraft] = useState<Draft>(() => ({ title: '', description: '', scheduled: inputInKarachi(hour(1)), deadline: inputInKarachi(hour(25)), priority: 'normal', resource: '', assignee: '', repeatUnit: 'none', repeatEvery: 1, repeatUntil: '' }));
+  const [draft, setDraft] = useState<Draft>(() => ({ title: '', description: '', scheduled: inputInKarachi(hour(1)), deadline: inputInKarachi(hour(25)), priority: 'normal', resource: '', assignee: '', repeatUnit: 'none', repeatEvery: 1, repeatUntil: '', repeatMonthlyCount: 1, repeatDayOne: 15, repeatDayTwo: 28 }));
 
   const role = profile?.role || 'manager';
   const director = role === 'managing_director';
@@ -141,11 +170,12 @@ export default function App() {
   function notify(message: string) { setNotice(message); window.setTimeout(() => setNotice(''), 3600); }
   function beginLoginTransition() {
     if (logoTransition) return;
+    setLoginEmail(''); setLoginPassword(''); setCaptchaToken('');
     setLogoTransition(true);
     window.setTimeout(() => {
       setScreen('login');
       setLogoTransition(false);
-    }, 4000);
+    }, 2000);
   }
   async function refreshTasks() {
     if (!session || !supabase) return;
