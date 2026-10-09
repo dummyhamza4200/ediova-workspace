@@ -391,13 +391,11 @@ export default function App() {
 }
 
 function TaskCard({ task, selected, director, onOpen, onStatus, onEdit }: { task: Task; selected: boolean; director: boolean; onOpen: () => void; onStatus: (s: Status) => void; onEdit: () => void }) {
-  const state = effectiveStatus(task);
   return <article className={'task-card compact-task' + (selected ? ' chosen' : '')}>
     <button className="task-open" onClick={onOpen} aria-label={'Open task: ' + task.title}>
-      <div className="compact-task-main"><span className={'priority-dot p-' + task.priority} /><h3>{task.title}</h3></div>
-      <div className="compact-task-due"><Clock3 size={14} /><span>Due {dateLabel(task.deadline_at, true)}</span><StatusPill value={state} /><ArrowRight size={15} /></div>
+      <div className="compact-task-main"><h3>{task.title}</h3></div>
+      <div className="compact-task-due"><Clock3 size={14} /><span>Due {dateLabel(task.deadline_at, true)}</span><ArrowRight size={15} /></div>
     </button>
-    {director && <div className="task-card-actions"><button className="subtle-action" onClick={onEdit}>Edit details</button></div>}
   </article>;
 }
 function StatusPill({ value }: { value: string }) {
