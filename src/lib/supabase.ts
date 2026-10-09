@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-// These are intentionally public browser settings (Supabase publishable key, not service_role).
-// Environment variables may override them for preview/staging projects.
+// Public browser settings only. Never expose a service-role or secret key here.
 const defaultUrl = 'https://xtiscozfkmjnvpdrxpys.supabase.co';
 const defaultPublishableKey = 'sb_publishable_17H84QN3NaUkKxC_ugEFDw_02LRxlzR';
 
@@ -11,4 +10,12 @@ const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
   || defaultPublishableKey;
 
 export const isSupabaseConfigured = Boolean(url && key && !url.includes('YOUR-PROJECT'));
-export const supabase = isSupabaseConfigured ? createClient(url, key) : null;
+
+// Credentials are re-entered for each visit: keep the session in memory rather than browser storage.
+export const supabase = isSupabaseConfigured ? createClient(url, key, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+}) : null;
