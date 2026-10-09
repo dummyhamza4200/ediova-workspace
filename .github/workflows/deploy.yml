@@ -38,13 +38,12 @@ jobs:
           path: ./dist
           if-no-files-found: error
       - name: Configure Pages
-        if: ${{ vars.ENABLE_GITHUB_PAGES == 'true' }}
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Upload Pages artifact
-        if: ${{ vars.ENABLE_GITHUB_PAGES == 'true' }}
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
       - name: Deploy to GitHub Pages
-        if: ${{ vars.ENABLE_GITHUB_PAGES == 'true' }}
         uses: actions/deploy-pages@v4
