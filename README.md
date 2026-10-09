@@ -7,7 +7,7 @@ A React, TypeScript and Vite website for Ediova Inc., with an authenticated task
 - Green-gradient Ediova logo and blended green/lime palette with a small orange accent.
 - Animated landing page and a 2-second logo transition when entering login.
 - No role picker on login. Supabase assigns role access from the signed-in profile.
-- Login supports browser autofill, remembered Supabase sessions, and clear inline sign-in feedback. Users should sign out on shared computers.
+- Login supports browser autofill, browser-persisted Supabase sessions, and clear inline sign-in feedback. On a trusted computer, a valid session opens the existing workspace directly; users should sign out on shared computers.
 - Manager and Managing Director task views, a compact today-only task dashboard, role-aware task details, comments, resources and calendar. The Managing Director alone can delete tasks and can release a task immediately with Start now.
 - Recurring tasks: daily, weekly on selected weekdays (every 1 or 2 weeks), and monthly on selected calendar dates. Blank end dates mean an ongoing series. Occurrences are generated within the current calendar month and continue into each new month. Weekly repeats default to 12:00 AM Pakistan time.
 - Completed work is moved out of active tasks. The Director can reopen completed tasks.

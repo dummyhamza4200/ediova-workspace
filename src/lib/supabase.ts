@@ -11,10 +11,10 @@ const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
 
 export const isSupabaseConfigured = Boolean(url && key && !url.includes('YOUR-PROJECT'));
 
-// Credentials are re-entered for each visit: keep the session in memory rather than browser storage.
+// Persist this user's Supabase session in this browser so they can return directly to their workspace. Sign out on shared devices.
 export const supabase = isSupabaseConfigured ? createClient(url, key, {
   auth: {
-    persistSession: false,
+    persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
   },
