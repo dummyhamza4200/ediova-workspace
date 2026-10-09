@@ -13,7 +13,7 @@ A React, TypeScript and Vite website for Ediova Inc., with an authenticated task
 - Completed work is moved out of active tasks. The Director can reopen completed tasks.
 - A seven-person team directory popup.
 - A company-notice tool for the Managing Director; the latest active notice appears at the top of dashboards.
-- Monthly performance: completed task counts and director-credited hours by month, plus the existing late-task score (minus 10 points for every full 24 hours late, minimum 0). Task-level hour targets are stored separately and visible only to the Managing Director; Managers see monthly totals, not individual targets.
+- Monthly performance: completed task counts and director-credited hours by month, plus the existing late-task score (minus 10 points for every full 24 hours late, minimum 0). Task-level hour targets are stored separately and visible only to the Managing Director; Managers see monthly totals, not individual targets. Credited hours are the Managing Director's task-hour allocation, not stopwatch-tracked time.
 - Asia/Karachi (UTC+05:00) display and scheduling.
 - Supabase row-level security, a recurring-task generator scheduled hourly, security headers, organization metadata, robots.txt and sitemap.xml.
 
