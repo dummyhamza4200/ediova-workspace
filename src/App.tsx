@@ -217,6 +217,10 @@ export default function App() {
     const { data, error } = await supabase.from('tasks').select('*').order('schedule_at', { ascending: true });
     if (!error && data) setTasks((data || []).map(row => fromDatabaseTask(row as unknown as Record<string, unknown>)));
     else if (error) notify('Tasks could not refresh. Please try again.');
+    if (profile?.role === 'managing_director') {
+      const { data: hourRows, error: hourError } = await supabase.from('task_hour_targets').select('task_id,target_hours');
+      if (!hourError && hourRows) setDirectorTaskHours(Object.fromEntries(hourRows.map((row: { task_id: string; target_hours: number | string }) => [row.task_id, Number(row.target_hours)])));
+    }
   }
   async function openSession(next: Session) {
     if (!supabase) return;
@@ -359,9 +363,9 @@ export default function App() {
       notify('Choose at least one weekday for the weekly repeat.'); return;
     }
     const scheduledInput = draft.repeatUnit === 'weekly' ? firstSelectedWeekdayInput(draft.scheduled, draft.repeatDays) : draft.scheduled;
-    const scheduleShift = fromKarachiInput(scheduledInput).getTime() - fromKarachiInput(draft.scheduled).getTime();
+    const scheduleShift = new Date(fromKarachiInput(scheduledInput)).getTime() - new Date(fromKarachiInput(draft.scheduled)).getTime();
     const scheduledAt = fromKarachiInput(scheduledInput);
-    const deadlineAt = new Date(fromKarachiInput(draft.deadline).getTime() + scheduleShift).toISOString();
+    const deadlineAt = new Date(new Date(fromKarachiInput(draft.deadline)).getTime() + scheduleShift).toISOString();
     if (new Date(deadlineAt).getTime() <= new Date(scheduledAt).getTime()) {
       notify('Deadline must be after the release time.'); return;
     }
