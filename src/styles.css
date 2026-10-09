@@ -320,3 +320,9 @@ body{background:#f6f9f4;color:var(--ink)}
 
 /* Transition progress bar now matches the 2-second login handoff. */
 .loading-track i{animation-duration:2s}
+
+
+/* Keep compact labels visible beside deadline and priority values in task details. */
+.task-dialog .inspector-meta span{display:flex;align-items:center;gap:4px;font-size:9px;color:#849285;background:transparent;border-radius:0;padding:0}
+.task-dialog .inspector-meta span svg{width:12px;height:12px;color:#67936a}
+.task-dialog .inspector-meta strong{font-size:10px;color:#42684a;background:#f4f7f1;border:1px solid #e8eee3;padding:6px 8px}
