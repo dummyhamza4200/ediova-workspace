@@ -194,6 +194,10 @@ export default function App() {
     setSession(next); setProfile(data as Profile);
     const { data: people } = await supabase.from('profiles').select('id,full_name,role,location,experience');
     setTeam((people || []) as Profile[]);
+    const { data: directoryRows } = await supabase.from('team_directory').select('id,full_name,job_title,location,sort_order,profile_id').order('sort_order');
+    if (directoryRows?.length) setTeamDirectory(directoryRows as TeamMember[]);
+    const { data: noticeRows } = await supabase.from('company_notices').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1);
+    setDashboardNotice((noticeRows?.[0] as CompanyNotice | undefined) || null);
     const { data: rows, error: taskError } = await supabase.from('tasks').select('*').order('schedule_at', { ascending: true });
     if (taskError) notify('Workspace opened, but tasks could not load.');
     else setTasks((rows || []).map(row => fromDatabaseTask(row as unknown as Record<string, unknown>)));
@@ -215,10 +219,58 @@ export default function App() {
     if (!session || !supabase) return;
     const timer = window.setInterval(() => {
       void refreshTasks();
+      if (supabase) {
+        void supabase.from('company_notices').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1)
+          .then(({ data }) => setDashboardNotice((data?.[0] as CompanyNotice | undefined) || null));
+      }
       setActiveTaskId(value => value);
     }, 20000);
     return () => window.clearInterval(timer);
   }, [session]);
+  useEffect(() => {
+    if (!session || !supabase || view !== 'performance') return;
+    let active = true;
+    const refreshPerformance = async () => {
+      const { data, error } = await supabase!.from('manager_performance').select('*').order('performance_score', { ascending: true });
+      if (active && !error && data) setPerformanceRows(data as PerformanceRow[]);
+    };
+    void refreshPerformance();
+    const timer = window.setInterval(() => void refreshPerformance(), 60000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [session, view]);
+  useEffect(() => {
+    if (screen !== 'login' || !turnstileSiteKey || !captchaHost.current) return;
+    const host = captchaHost.current;
+    let widgetId: string | null = null;
+    let script: HTMLScriptElement | null = null;
+    const render = () => {
+      if (!window.turnstile || !host || widgetId) return;
+      widgetId = window.turnstile.render(host, {
+        sitekey: turnstileSiteKey,
+        theme: 'light',
+        size: 'flexible',
+        callback: (token: string) => setCaptchaToken(token),
+        'expired-callback': () => setCaptchaToken(''),
+        'error-callback': () => setCaptchaToken(''),
+      });
+    };
+    render();
+    if (!window.turnstile) {
+      script = document.querySelector('script[data-ediova-turnstile]') as HTMLScriptElement | null;
+      if (!script) {
+        script = document.createElement('script');
+        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+        script.async = true; script.defer = true; script.dataset.ediovaTurnstile = 'true';
+        document.head.appendChild(script);
+      }
+      script.addEventListener('load', render);
+    }
+    return () => {
+      if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
+      setCaptchaToken('');
+      if (script) script.removeEventListener('load', render);
+    };
+  }, [screen]);
   const released = useMemo(() => tasks.filter(t => director || new Date(t.scheduled_at).getTime() <= Date.now()), [tasks, director]);
   const active = released.filter(t => t.status !== 'completed' && t.status !== 'cancelled' && t.status !== 'archived');
   const overdue = active.filter(t => effectiveStatus(t) === 'overdue');
@@ -243,18 +295,27 @@ export default function App() {
 
   async function submitLogin(event: FormEvent) {
     event.preventDefault();
+    if (turnstileSiteKey && !captchaToken) { notify('Please complete the quick human verification.'); return; }
     if (!isSupabaseConfigured || !supabase) {
+      setLoginEmail(''); setLoginPassword(''); setCaptchaToken('');
       setProfile(managerDemo);
       setScreen('workspace'); notify('Preview mode — changes stay in this browser only.'); return;
     }
+    const email = loginEmail.trim();
+    const password = loginPassword;
+    setLoginEmail(''); setLoginPassword('');
     setLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPassword });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email, password,
+      ...(captchaToken ? { options: { captchaToken } } : {}),
+    });
+    setCaptchaToken('');
     if (error || !data.session) { notify(error?.message || 'Login failed.'); setLoading(false); return; }
     await openSession(data.session);
   }
   async function logout() {
     if (supabase && session) await supabase.auth.signOut();
-    setProfile(null); setSession(null); setActiveTaskId(null); setScreen('landing'); setView('dashboard');
+    setProfile(null); setSession(null); setActiveTaskId(null); setLoginEmail(''); setLoginPassword(''); setCaptchaToken(''); setScreen('landing'); setView('dashboard');
   }
   function startCreate() {
     setEditing(null);
