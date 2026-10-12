@@ -563,3 +563,7 @@ body{background:#f6f9f4;color:var(--ink)}
  .datetime-now-row{grid-template-columns:minmax(0,1fr)}
  .start-now-button{width:100%}
 }
+
+
+/* Unfinished tasks past their deadline use a clear red card treatment. */
+.compact-task.task-overdue{--task-fill:#fee2e2;--task-border:#fca5a5;--task-accent:#b91c1c;--task-ink:#7f1d1d;background:var(--task-fill);border-color:var(--task-border)}
