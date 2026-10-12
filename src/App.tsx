@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronLeft, ChevronRight,
   Clock3, ExternalLink, FileText, LayoutDashboard, Link as LinkIcon, LockKeyhole, LogOut,
-  BarChart3, Bell, MessageCircle, Plus, Repeat, Search, ShieldCheck, Sparkles, Target, UserRound, Users, X,
+  BarChart3, Bell, BellRing, MessageCircle, NotebookPen, Plus, Repeat, Search, ShieldCheck, Sparkles, Target, Trash2, UserRound, Users, X,
 } from 'lucide-react';
 import type { Session } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
@@ -15,6 +15,7 @@ type View = 'dashboard' | 'tasks' | 'calendar' | 'completed' | 'performance' | '
 type Profile = { id: string; full_name: string; role: Role; location?: string | null; experience?: string | null };
 type TeamMember = { id: string; full_name: string; job_title: string; location: string; sort_order: number; profile_id?: string | null };
 type CompanyNotice = { id: string; title: string; body: string; created_by: string; created_at: string; is_active: boolean; expires_at?: string | null };
+type UserNote = { id: string; user_id: string; title: string; body: string; reminder_date: string | null; completed_at: string | null; popup_dismissed_on: string | null; created_at: string; updated_at: string };
 type PerformanceRow = { manager_id: string; manager_name: string; location?: string | null; assigned_tasks: number; completed_tasks: number; delayed_tasks: number; penalty_points: number; performance_score: number };
 type MonthlyPerformanceRow = { manager_id: string; manager_name: string; location?: string | null; month_start: string; completed_tasks: number; completed_hours: number };
 type DailyPerformanceRow = { manager_id: string; manager_name: string; location?: string | null; selected_date: string; completed_tasks: number; completed_hours: number };
@@ -43,6 +44,7 @@ const TEAM_FALLBACK: TeamMember[] = [
 ];
 const TASK_KEY = 'ediova-workspace-demo-tasks-v1';
 const COMMENT_KEY = 'ediova-workspace-demo-comments-v1';
+const NOTES_KEY = 'ediova-workspace-private-notes-v1';
 const hour = (n: number) => new Date(Date.now() + n * 3600000).toISOString();
 const demoTasks = (): Task[] => [
   { id: 'demo-1', title: 'Polish the brand presentation', description: 'Review the latest brand presentation, refine the opening slides, and make the visual rhythm consistent from start to finish. Check typography, transitions and the final call to action.', scheduled_at: hour(-8), deadline_at: hour(9), priority: 'high', status: 'in_progress', resource_url: 'https://ediova.com' },
@@ -214,10 +216,24 @@ export default function App() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [draft, setDraft] = useState<Draft>(() => defaultTaskDraft());
   const [taskPendingDelete, setTaskPendingDelete] = useState<Task | null>(null);
+  const [userNotes, setUserNotes] = useState<UserNote[]>([]);
+  const [currentDateKey, setCurrentDateKey] = useState(() => todayKey());
+  const [notepadOpen, setNotepadOpen] = useState(false);
+  const [noteEditing, setNoteEditing] = useState<UserNote | null>(null);
+  const [noteTitleDraft, setNoteTitleDraft] = useState('');
+  const [noteBodyDraft, setNoteBodyDraft] = useState('');
+  const [noteReminderDateDraft, setNoteReminderDateDraft] = useState('');
+  const [reminderPopupOpen, setReminderPopupOpen] = useState(false);
+  const [reminderPopupDismissedForDate, setReminderPopupDismissedForDate] = useState('');
 
   const role = profile?.role || 'manager';
   const director = role === 'managing_director';
   const preview = !isSupabaseConfigured || !session;
+  const todayReminderNotes = userNotes.filter(note => note.reminder_date === currentDateKey && !note.completed_at);
+  const popupReminderNotes = todayReminderNotes.filter(note => note.popup_dismissed_on !== currentDateKey);
+  const dashboardReminders = userNotes.filter(note => Boolean(note.reminder_date) && (note.reminder_date as string) <= currentDateKey && !note.completed_at)
+    .sort((a, b) => (a.reminder_date || '').localeCompare(b.reminder_date || '') || b.created_at.localeCompare(a.created_at));
+  const openPersonalNotesCount = userNotes.filter(note => !note.completed_at).length;
 
   function notify(message: string) { setNotice(message); window.setTimeout(() => setNotice(''), 3600); }
   async function beginLoginTransition() {
@@ -268,6 +284,10 @@ export default function App() {
     }
     setLoginError(''); setLoginEmail(''); setLoginPassword('');
     setSession(next); setProfile(data as Profile);
+    setUserNotes([]); setReminderPopupOpen(false); setReminderPopupDismissedForDate('');
+    const { data: personalNotes, error: personalNotesError } = await supabase.from('user_notes').select('*').order('created_at', { ascending: false });
+    if (personalNotesError) notify('Your private Notepad could not load: ' + personalNotesError.message);
+    else setUserNotes((personalNotes || []) as UserNote[]);
     const { data: people } = await supabase.from('profiles').select('id,full_name,role,location,experience');
     setTeam((people || []) as Profile[]);
     const { data: directoryRows } = await supabase.from('team_directory').select('id,full_name,job_title,location,sort_order,profile_id').order('sort_order');
@@ -299,6 +319,15 @@ export default function App() {
     }
   }, [tasks, comments, preview]);
   useEffect(() => {
+    if (preview && profile) {
+      try { localStorage.setItem(NOTES_KEY + ':' + profile.id, JSON.stringify(userNotes)); } catch { /* storage is optional */ }
+    }
+  }, [userNotes, profile?.id, preview]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentDateKey(todayKey()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
     if (!session || !supabase) return;
     const timer = window.setInterval(() => {
       void refreshTasks();
@@ -310,6 +339,13 @@ export default function App() {
     }, 20000);
     return () => window.clearInterval(timer);
   }, [session]);
+  useEffect(() => {
+    if (screen !== 'workspace' || !profile || popupReminderNotes.length === 0 || reminderPopupDismissedForDate === currentDateKey) {
+      setReminderPopupOpen(false);
+      return;
+    }
+    setReminderPopupOpen(true);
+  }, [screen, profile?.id, popupReminderNotes.length, currentDateKey, reminderPopupDismissedForDate]);
   useEffect(() => {
     if (!session || !supabase || view !== 'performance') return;
     let active = true;
@@ -360,6 +396,8 @@ export default function App() {
     if (!isSupabaseConfigured || !supabase) {
       setLoginEmail(''); setLoginPassword('');
       setProfile(managerDemo);
+      setUserNotes(safeRead(NOTES_KEY + ':' + managerDemo.id, () => []));
+      setReminderPopupDismissedForDate('');
       setScreen('workspace'); notify('Preview mode — changes stay in this browser only.'); return;
     }
     const email = loginEmail.trim();
@@ -374,7 +412,7 @@ export default function App() {
   }
   async function logout() {
     if (supabase && session) await supabase.auth.signOut();
-    setProfile(null); setSession(null); setActiveTaskId(null); setLoginEmail(''); setLoginPassword(''); setScreen('landing'); setView('dashboard');
+    setProfile(null); setSession(null); setUserNotes([]); setReminderPopupOpen(false); setReminderPopupDismissedForDate(''); setNotepadOpen(false); setActiveTaskId(null); setLoginEmail(''); setLoginPassword(''); setScreen('landing'); setView('dashboard');
   }
   function startCreate() {
     setEditing(null);
@@ -613,6 +651,70 @@ export default function App() {
     }
     setDashboardNotice(null); notify('Notice archived.');
   }
+  function startNewUserNote() {
+    setNoteEditing(null); setNoteTitleDraft(''); setNoteBodyDraft(''); setNoteReminderDateDraft(''); setNotepadOpen(true);
+  }
+  function startEditUserNote(note: UserNote) {
+    setNoteEditing(note); setNoteTitleDraft(note.title); setNoteBodyDraft(note.body);
+    setNoteReminderDateDraft(note.reminder_date || ''); setNotepadOpen(true);
+  }
+  async function saveUserNote(event: FormEvent) {
+    event.preventDefault();
+    if (!profile || !noteTitleDraft.trim()) return;
+    const now = new Date().toISOString();
+    const reminderDate = noteReminderDateDraft || null;
+    const patch: Record<string, unknown> = { title: noteTitleDraft.trim(), body: noteBodyDraft.trim(), reminder_date: reminderDate, updated_at: now };
+    if (!noteEditing || noteEditing.reminder_date !== reminderDate) patch.popup_dismissed_on = null;
+    let saved: UserNote;
+    if (session && supabase) {
+      const result = noteEditing
+        ? await supabase.from('user_notes').update(patch).eq('id', noteEditing.id).select('*').single()
+        : await supabase.from('user_notes').insert({ ...patch, popup_dismissed_on: null, user_id: profile.id }).select('*').single();
+      if (result.error || !result.data) { notify('Your note could not be saved: ' + (result.error?.message || 'please try again')); return; }
+      saved = result.data as UserNote;
+    } else {
+      saved = {
+        id: noteEditing?.id || 'local-note-' + Date.now(), user_id: profile.id,
+        title: noteTitleDraft.trim(), body: noteBodyDraft.trim(), reminder_date: reminderDate,
+        completed_at: noteEditing?.completed_at || null,
+        popup_dismissed_on: !noteEditing || noteEditing.reminder_date !== reminderDate ? null : noteEditing.popup_dismissed_on,
+        created_at: noteEditing?.created_at || now, updated_at: now,
+      };
+    }
+    setUserNotes(previous => noteEditing ? previous.map(note => note.id === noteEditing.id ? saved : note) : [saved, ...previous]);
+    setNotepadOpen(false); setNoteEditing(null); setNoteTitleDraft(''); setNoteBodyDraft(''); setNoteReminderDateDraft('');
+    notify(noteEditing ? 'Your note has been updated.' : reminderDate ? 'Note saved with a reminder.' : 'Note saved to your private Notepad.');
+  }
+  async function setUserNoteCompleted(note: UserNote, completed: boolean) {
+    const completedAt = completed ? new Date().toISOString() : null;
+    let saved: UserNote = { ...note, completed_at: completedAt, updated_at: new Date().toISOString() };
+    if (session && supabase) {
+      const { data, error } = await supabase.from('user_notes').update({ completed_at: completedAt }).eq('id', note.id).select('*').single();
+      if (error || !data) { notify('Reminder status could not be updated: ' + (error?.message || 'please try again')); return; }
+      saved = data as UserNote;
+    }
+    setUserNotes(previous => previous.map(item => item.id === note.id ? saved : item));
+    notify(completed ? 'Reminder completed.' : 'Reminder reopened.');
+  }
+  async function deleteUserNote(note: UserNote) {
+    if (session && supabase) {
+      const { error } = await supabase.from('user_notes').delete().eq('id', note.id);
+      if (error) { notify('Note could not be removed: ' + error.message); return; }
+    }
+    setUserNotes(previous => previous.filter(item => item.id !== note.id));
+    notify('Note removed from your Notepad.');
+  }
+  async function dismissReminderPopup() {
+    const today = currentDateKey;
+    const remindersToDismiss = userNotes.filter(note => note.reminder_date === today && !note.completed_at && note.popup_dismissed_on !== today);
+    setReminderPopupDismissedForDate(today); setReminderPopupOpen(false);
+    if (session && supabase && remindersToDismiss.length) {
+      const { error } = await supabase.from('user_notes').update({ popup_dismissed_on: today }).in('id', remindersToDismiss.map(note => note.id));
+      if (error) { notify('The reminder popup closed, but its dismissal could not be saved: ' + error.message); return; }
+    }
+    const ids = new Set(remindersToDismiss.map(note => note.id));
+    setUserNotes(previous => previous.map(note => ids.has(note.id) ? { ...note, popup_dismissed_on: today } : note));
+  }
   return (
     <main className="workspace-shell">
       <aside className="sidebar"><a className="brand side-brand" href="#" onClick={e => { e.preventDefault(); setScreen('landing'); }}><img src="./ediova-mark.svg" alt="" /><span>ediova<span className="brand-dot">.</span></span></a><div className="workspace-tag"><span className="status-led" />TEAM WORKSPACE</div><div className="side-section-label">WORKSPACE</div>{navViews.filter(item => ['dashboard', 'tasks', 'calendar', 'completed', 'performance', 'profile'].includes(item.id)).map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'nav-item current' : 'nav-item'} onClick={() => setView(item.id)}><Icon size={17} /><span>{item.label}</span>{item.id === 'tasks' && <small>{activeThisMonth.length}</small>}</button>; })}<div className="side-section-label side-spaced">COMPANY</div>{navViews.filter(item => item.id === 'policies' || item.id === 'privacy').map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'nav-item current' : 'nav-item'} onClick={() => setView(item.id)}><Icon size={17} /><span>{item.label}</span></button>; })}<div className="sidebar-bottom"><div className="sidebar-mini-card"><Sparkles size={16} /><strong>Make room<br />for good work.</strong><span>Clarity creates space.</span></div><button className="nav-item" onClick={() => void logout()}><LogOut size={17} /><span>Sign out</span></button><div className="sidebar-user"><div className="user-avatar">{(profile?.full_name || 'E').slice(0, 1)}</div><div><strong>{profile?.full_name || 'Ediova member'}</strong><small>{roleLabel(role)}</small></div><span className="online-dot" /></div></div></aside>
@@ -620,6 +722,17 @@ export default function App() {
       {preview && <div className="preview-banner"><Sparkles size={16} /><span><strong>Preview mode</strong> — changes are saved in this browser only. Configure Supabase for shared accounts and cross-device persistence.</span></div>}
 
       {view === 'dashboard' && dashboardNotice && <div className="company-notice"><div className="notice-symbol"><Bell size={16} /></div><div className="notice-copy"><span>COMPANY NOTICE</span><strong>{dashboardNotice.title}</strong><p>{dashboardNotice.body}</p></div>{director && <button className="notice-dismiss" onClick={() => void dismissDashboardNotice()} aria-label="Archive notice">Archive</button>}</div>}
+      {view === 'dashboard' && <section className="dashboard-notepad-area" aria-label="Personal Notepad and reminders">
+        <div className="dashboard-notepad-toolbar"><span className="eyebrow"><NotebookPen size={13} /> YOUR PRIVATE NOTEPAD</span><button className="button button-light dashboard-notepad-trigger" onClick={startNewUserNote}><Plus size={15} /> New note <span className="notepad-open-count">{openPersonalNotesCount}</span></button></div>
+        {dashboardReminders.length > 0 && <div className="dashboard-reminder-stack">{dashboardReminders.slice(0, 3).map(note => <article className="dashboard-reminder-card" key={note.id}>
+          <button type="button" className="dashboard-reminder-main" onClick={() => startEditUserNote(note)} title="Open note in Notepad">
+            <span className={'dashboard-reminder-date' + (note.reminder_date === currentDateKey ? ' reminder-due-today' : '')}><BellRing size={12} /> {note.reminder_date === currentDateKey ? 'TODAY' : 'REMINDER · ' + dateLabel(note.reminder_date + 'T12:00:00+05:00')}</span>
+            <strong>{note.title}</strong><span className="dashboard-reminder-preview">{note.body || 'Personal reminder'}</span>
+          </button>
+          <div className="dashboard-reminder-actions"><button type="button" aria-label={'Mark ' + note.title + ' complete'} title="Complete reminder" onClick={() => void setUserNoteCompleted(note, true)}><Check size={14} /></button><button type="button" aria-label={'Remove ' + note.title} title="Remove reminder" onClick={() => void deleteUserNote(note)}><Trash2 size={14} /></button></div>
+        </article>)}
+        {dashboardReminders.length > 3 && <button className="dashboard-more-reminders" onClick={() => setNotepadOpen(true)}>+{dashboardReminders.length - 3} more reminders · Open Notepad</button>}</div>}
+      </section>}
       {view === 'dashboard' && <section className="today-board">
         <header className="today-board-header"><div><span className="eyebrow">TODAY'S FOCUS</span><h2>Today's tasks</h2><p>{todayTasks.length ? "Today's scheduled work and unfinished carry-over tasks." : 'No active tasks are scheduled for today or carried over from earlier days.'}</p></div><span className="today-count">{String(todayTasks.length).padStart(2, '0')} tasks</span></header>
         <div className="today-task-grid" style={{ gridTemplateColumns: `repeat(${Math.max(2, Math.ceil(todayTasks.length / 3))}, minmax(0, 1fr))` }}>
@@ -684,6 +797,26 @@ export default function App() {
       {view === 'privacy' && <InfoPage icon={<ShieldCheck size={22} />} eyebrow="PRIVACY & SECURITY" title="Work stays in the right hands." body="This workspace is intended for authorised Ediova team members. In production, authentication and database access are provided by Supabase with row-level security. Preview mode stores sample task data only in the current browser and does not synchronise it to other people." list={['Do not place passwords, payment details or unnecessary personal data in task comments.','Use individual accounts and never share login credentials.','Managers see assigned tasks only after their scheduled release time.','This draft notice must be reviewed against the final hosting, data retention and business practices before launch.']} />}
       <footer className="workspace-footer"><span><strong>Ediova Inc.</strong> · Jl. Kaluirang 14,5, Yogyakarta 55584, Indonesia</span><span>Workspace times use Asia/Karachi (UTC+05:00).</span><a href="tel:+6281377012611">+62 (813) 77012611 <ArrowUpRight size={13} /></a></footer>
       </section>
+      {notepadOpen && <div className="modal-backdrop notepad-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setNotepadOpen(false); }}><section className="notepad-modal" role="dialog" aria-modal="true" aria-labelledby="notepad-title">
+        <div className="modal-heading"><div><span className="eyebrow"><NotebookPen size={13} /> PRIVATE TO YOU</span><h2 id="notepad-title">Your Notepad.</h2><p className="notepad-subtitle">Notes and reminders only you can see.</p></div><button type="button" className="icon-button" onClick={() => setNotepadOpen(false)} aria-label="Close Notepad"><X /></button></div>
+        <form className="notepad-form" onSubmit={saveUserNote}>
+          <label>Note title<input required maxLength={120} value={noteTitleDraft} onChange={event => setNoteTitleDraft(event.target.value)} placeholder="What do you want to remember?" /></label>
+          <label>Note<textarea rows={3} maxLength={5000} value={noteBodyDraft} onChange={event => setNoteBodyDraft(event.target.value)} placeholder="Add details, ideas, or a personal reminder…" /></label>
+          <label className="notepad-reminder-field"><span>Remind me on <small>OPTIONAL</small></span><input type="date" min={currentDateKey} value={noteReminderDateDraft} onChange={event => setNoteReminderDateDraft(event.target.value)} /><span className="field-hint">On this date, a pop-up will appear after you sign in. The reminder also stays on your dashboard until completed or removed.</span></label>
+          <div className="modal-actions"><button type="button" className="button button-light" onClick={() => { setNoteEditing(null); setNoteTitleDraft(''); setNoteBodyDraft(''); setNoteReminderDateDraft(''); setNotepadOpen(false); }}>Cancel</button><button className="button button-dark"><Check size={15} /> {noteEditing ? 'Save note' : 'Add note'}</button></div>
+        </form>
+        <div className="notepad-list-heading"><div><span className="eyebrow">YOUR NOTES</span><strong>Saved privately</strong></div><span>{userNotes.length} total</span></div>
+        <div className="notepad-notes-list">{userNotes.slice().sort((a,b) => b.updated_at.localeCompare(a.updated_at)).map(note => <article className={'notepad-note-row' + (note.completed_at ? ' note-is-completed' : '')} key={note.id}>
+          <div className="notepad-note-copy"><strong>{note.title}</strong><p>{note.body || 'No extra details.'}</p><div className="notepad-note-meta">{note.reminder_date && <span><CalendarDays size={12} /> {dateLabel(note.reminder_date + 'T12:00:00+05:00')}</span>}{note.completed_at && <span className="note-completed-label"><Check size={12} /> Completed</span>}</div></div>
+          <div className="notepad-note-actions"><button type="button" title="Edit note" aria-label={'Edit ' + note.title} onClick={() => startEditUserNote(note)}><NotebookPen size={14} /></button><button type="button" title={note.completed_at ? 'Reopen reminder' : 'Mark complete'} aria-label={(note.completed_at ? 'Reopen ' : 'Complete ') + note.title} onClick={() => void setUserNoteCompleted(note, !note.completed_at)}>{note.completed_at ? <Repeat size={14} /> : <Check size={14} />}</button><button type="button" className="notepad-delete-action" title="Remove note" aria-label={'Remove ' + note.title} onClick={() => void deleteUserNote(note)}><Trash2 size={14} /></button></div>
+        </article>)}{userNotes.length === 0 && <div className="notepad-empty"><NotebookPen size={22} /><strong>Your page is clear.</strong><span>Add your first note or set a date to create a reminder.</span></div>}</div>
+      </section></div>}
+      {reminderPopupOpen && screen === 'workspace' && popupReminderNotes.length > 0 && <div className="reminder-popup-backdrop" role="presentation"><section className="reminder-popup" role="dialog" aria-modal="true" aria-labelledby="reminder-popup-title">
+        <div className="reminder-popup-heading"><div className="reminder-popup-icon"><BellRing size={20} /></div><button type="button" className="icon-button" onClick={() => void dismissReminderPopup()} aria-label="Close reminder popup"><X size={17} /></button></div>
+        <span className="eyebrow">A NOTE TO YOURSELF</span><h2 id="reminder-popup-title">Your reminders for today.</h2><p className="reminder-popup-intro">Welcome back, {profile?.full_name?.split(/\s+/)[0] || 'there'}. You set these aside for today.</p>
+        <div className="reminder-popup-list">{popupReminderNotes.map(note => <article className="reminder-popup-note" key={note.id}><strong>{note.title}</strong>{note.body && <p>{note.body}</p>}<span><CalendarDays size={12} /> Today · {dateLabel(note.reminder_date + 'T12:00:00+05:00')}</span></article>)}</div>
+        <div className="reminder-popup-actions"><button className="button button-light" onClick={() => { void dismissReminderPopup(); setNotepadOpen(true); }}>Review in Notepad</button><button className="button button-dark" onClick={() => void dismissReminderPopup()}>Got it for today <Check size={15} /></button></div>
+      </section></div>}
       {teamModal && <div className="modal-backdrop team-modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setTeamModal(false); }}><section className="team-modal" role="dialog" aria-modal="true" aria-labelledby="team-modal-title"><div className="modal-heading"><div><span className="eyebrow">THE PEOPLE BEHIND THE WORK</span><h2 id="team-modal-title">Ediova team.</h2></div><button type="button" className="icon-button" onClick={() => setTeamModal(false)} aria-label="Close team"><X /></button></div><div className="team-directory-grid">{teamDirectory.slice().sort((a,b)=>a.sort_order-b.sort_order).map((member,index)=><article className="team-person-card" key={member.id}><div className={'team-person-avatar team-avatar-'+(index%4)}>{member.full_name.split(/\s+/).map(part=>part[0]).slice(0,2).join('')}</div><div><h3>{member.full_name}</h3><span>{member.job_title}</span><p>{member.location}</p></div><span className="team-person-number">0{index+1}</span></article>)}</div><p className="team-modal-foot">Ediova Inc. · Yogyakarta, Indonesia</p></section></div>}
       {noticeComposer && director && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setNoticeComposer(false); }}><form className="task-modal notice-modal" onSubmit={publishDashboardNotice}><div className="modal-heading"><div><span className="eyebrow">TEAM COMMUNICATION</span><h2>Post a notice.</h2></div><button type="button" className="icon-button" onClick={() => setNoticeComposer(false)} aria-label="Close"><X /></button></div><label>Notice heading<input required maxLength={120} value={noticeTitleDraft} onChange={e => setNoticeTitleDraft(e.target.value)} placeholder="A quick update for everyone" /></label><label>Message<textarea required rows={4} maxLength={2000} value={noticeBodyDraft} onChange={e => setNoticeBodyDraft(e.target.value)} placeholder="Write the announcement that should appear at the top of every dashboard." /></label><div className="modal-actions"><button type="button" className="button button-light" onClick={() => setNoticeComposer(false)}>Cancel</button><button className="button button-dark"><Bell size={15} /> Publish notice</button></div></form></div>}
       {composer && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setComposer(false); }}><form className="task-modal" onSubmit={saveTask}><div className="modal-heading"><div><span className="eyebrow">{editing ? 'UPDATE THE BRIEF' : 'MAKE IT HAPPEN'}</span><h2>{editing ? 'Edit task.' : 'Create a task.'}</h2></div><button type="button" className="icon-button" onClick={() => setComposer(false)} aria-label="Close"><X /></button></div><label>Task title<input required maxLength={180} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="Give the work a clear name" /></label><label>Description<textarea required rows={4} maxLength={10000} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="What needs to happen? Add the useful details." /></label><div className="form-two"><label>Release date &amp; time<div className="datetime-now-row"><input type="datetime-local" required value={draft.scheduled} onChange={e => setDraft({ ...draft, scheduled: e.target.value, startNow: false })} /><button type="button" className={'button button-light start-now-button' + (draft.startNow ? ' active' : '')} onClick={() => setDraft({ ...draft, scheduled: inputInKarachi(new Date().toISOString()), startNow: true })}><Clock3 size={14} /> {draft.startNow ? 'Starts now' : 'Start now'}</button></div></label><label>Deadline<input type="datetime-local" required value={draft.deadline} onChange={e => setDraft({ ...draft, deadline: e.target.value })} /></label></div><div className="form-two"><label>Priority<select value={draft.priority} onChange={e => setDraft({ ...draft, priority: e.target.value as Priority })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></label><label>Assign to<select value={draft.assignee || managerId} onChange={e => setDraft({ ...draft, assignee: e.target.value })}>{(team.filter(p => p.role === 'manager').length ? team.filter(p => p.role === 'manager') : [managerDemo]).map(p => <option value={p.id} key={p.id}>{p.full_name}</option>)}</select></label></div>{director && <label>Hours credited when completed <span className="optional-label">PRIVATE TO MANAGING DIRECTOR</span><input type="number" min="0.25" max="1000" step="0.25" value={draft.targetHours} onChange={e => setDraft({ ...draft, targetHours: e.target.value })} placeholder="For example, 3.5" /><span className="field-hint">Manually assigned by the Managing Director; credited to performance when the task is completed. The amount stays private from Managers.</span></label>}<label>Task resource links <span className="optional-label">OPTIONAL · ONE URL PER LINE</span><textarea rows={2} value={draft.resource} onChange={e => setDraft({ ...draft, resource: e.target.value })} placeholder="One URL per line" /></label>
