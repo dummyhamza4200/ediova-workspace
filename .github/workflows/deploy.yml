@@ -59,3 +59,45 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Verify published page and built assets
+        env:
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          html_file="$(mktemp)"
+          ready=0
+          for attempt in $(seq 1 12); do
+            code="$(curl --silent --show-error --location --output "$html_file" --write-out '%{http_code}' "$SITE_URL" || true)"
+            if [ "$code" = "200" ] && grep -q '<div id="root"></div>' "$html_file"; then
+              ready=1
+              break
+            fi
+            echo "Attempt $attempt: waiting for published site (HTTP ${code:-unknown})"
+            sleep 5
+          done
+          if [ "$ready" != "1" ]; then
+            echo "The deployed home page did not return the expected HTML."
+            head -c 3000 "$html_file" || true
+            exit 1
+          fi
+          js_asset="$(grep -oE 'src="[^"]+\\.js"' "$html_file" | head -n1 | cut -d '"' -f2)"
+          css_asset="$(grep -oE 'href="[^"]+\\.css"' "$html_file" | head -n1 | cut -d '"' -f2)"
+          if [ -z "$js_asset" ] || [ -z "$css_asset" ]; then
+            echo "Built JavaScript or CSS asset reference was missing from the deployed HTML."
+            exit 1
+          fi
+          for asset in "$js_asset" "$css_asset"; do
+            case "$asset" in
+              http*) asset_url="$asset" ;;
+              /*) asset_url="${SITE_URL%/}$asset" ;;
+              *) asset_url="${SITE_URL%/}/$asset" ;;
+            esac
+            asset_code="$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' "$asset_url" || true)"
+            echo "Asset $asset returned HTTP ${asset_code:-unknown}"
+            if [ "$asset_code" != "200" ]; then
+              echo "A required frontend asset is not being served: $asset_url"
+              exit 1
+            fi
+          done
+          echo "Published page and frontend assets are responding."
