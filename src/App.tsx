@@ -344,7 +344,7 @@ export default function App() {
     return [...data].sort((a, b) => new Date(a.deadline_at).getTime() - new Date(b.deadline_at).getTime());
   }, [view, completed, activeThisMonth, selectedTaskDay, search, filter]);
   const activeTask = released.find(t => t.id === activeTaskId) || null;
-  const todayTasks = active.filter(t => dayOffset(t.scheduled_at) === 0).sort((a, b) => new Date(a.deadline_at).getTime() - new Date(b.deadline_at).getTime());
+  const todayTasks = active.filter(t => dayOffset(t.scheduled_at) <= 0).sort((a, b) => new Date(a.deadline_at).getTime() - new Date(b.deadline_at).getTime());
   const nav: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
     { id: 'tasks', label: 'All tasks', icon: Target },
@@ -621,9 +621,9 @@ export default function App() {
 
       {view === 'dashboard' && dashboardNotice && <div className="company-notice"><div className="notice-symbol"><Bell size={16} /></div><div className="notice-copy"><span>COMPANY NOTICE</span><strong>{dashboardNotice.title}</strong><p>{dashboardNotice.body}</p></div>{director && <button className="notice-dismiss" onClick={() => void dismissDashboardNotice()} aria-label="Archive notice">Archive</button>}</div>}
       {view === 'dashboard' && <section className="today-board">
-        <header className="today-board-header"><div><span className="eyebrow">TODAY'S FOCUS</span><h2>Today's tasks</h2><p>{todayTasks.length ? 'A clear, focused view of the work scheduled for today.' : 'Nothing scheduled for today. Enjoy the breathing room.'}</p></div><span className="today-count">{String(todayTasks.length).padStart(2, '0')} tasks</span></header>
+        <header className="today-board-header"><div><span className="eyebrow">TODAY'S FOCUS</span><h2>Today's tasks</h2><p>{todayTasks.length ? "Today's scheduled work and unfinished carry-over tasks." : 'No active tasks are scheduled for today or carried over from earlier days.'}</p></div><span className="today-count">{String(todayTasks.length).padStart(2, '0')} tasks</span></header>
         <div className="today-task-grid" style={{ gridTemplateColumns: `repeat(${Math.max(2, Math.ceil(todayTasks.length / 3))}, minmax(0, 1fr))` }}>
-          {todayTasks.length ? todayTasks.map((task, index) => <TaskCard key={task.id} colorIndex={index} task={task} selected={activeTaskId === task.id} director={director} onOpen={() => openTask(task)} onStatus={status => void setStatus(task, status)} onEdit={() => startEdit(task)} />) : <div className="today-empty"><div className="empty-icon"><Check size={22} /></div><h3>Room to breathe.</h3><p>Tasks for another day stay off this dashboard. Open All tasks or Calendar when you need the wider schedule.</p></div>}
+          {todayTasks.length ? todayTasks.map((task, index) => <TaskCard key={task.id} colorIndex={index} task={task} selected={activeTaskId === task.id} director={director} onOpen={() => openTask(task)} onStatus={status => void setStatus(task, status)} onEdit={() => startEdit(task)} />) : <div className="today-empty"><div className="empty-icon"><Check size={22} /></div><h3>You're all caught up.</h3><p>Today's tasks and unfinished work from previous days appear here. Future tasks stay in Calendar until their release date.</p></div>}
         </div>
       </section>}
       {view === 'tasks' && <>
@@ -708,7 +708,7 @@ export default function App() {
 }
 
 function TaskCard({ task, selected, director, colorIndex, onOpen, onStatus, onEdit }: { task: Task; selected: boolean; director: boolean; colorIndex: number; onOpen: () => void; onStatus: (s: Status) => void; onEdit: () => void }) {
-  return <article className={'task-card compact-task task-tone-' + (colorIndex % 8) + (selected ? ' chosen' : '')}>
+  return <article className={'task-card compact-task task-tone-' + (colorIndex % 8) + (effectiveStatus(task) === 'overdue' ? ' task-overdue' : '') + (selected ? ' chosen' : '')}>
     <button className="task-open" onClick={onOpen} aria-label={'Open task: ' + task.title}>
       <div className="compact-task-main"><span className="task-card-number">{String(colorIndex + 1).padStart(2, '0')}</span><div className="task-card-copy"><h3>{task.title}</h3><div className="task-card-tags"><StatusPill value={effectiveStatus(task)} /><span className={'priority-chip priority-' + task.priority}>{priorityLabel(task.priority)}</span></div></div></div>
       <div className="compact-task-due"><span className="task-due-caption">DUE</span><strong>{dateLabel(task.deadline_at, true)}</strong><ArrowRight size={16} /></div>
