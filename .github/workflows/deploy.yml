@@ -81,8 +81,8 @@ jobs:
             head -c 3000 "$html_file" || true
             exit 1
           fi
-          js_asset="$(grep -oE 'src="[^"]+\\.js"' "$html_file" | head -n1 | cut -d '"' -f2)"
-          css_asset="$(grep -oE 'href="[^"]+\\.css"' "$html_file" | head -n1 | cut -d '"' -f2)"
+          js_asset="$(grep -oE 'src="[^"]+[.]js"' "$html_file" | head -n1 | cut -d '"' -f2)"
+          css_asset="$(grep -oE 'href="[^"]+[.]css"' "$html_file" | head -n1 | cut -d '"' -f2)"
           if [ -z "$js_asset" ] || [ -z "$css_asset" ]; then
             echo "Built JavaScript or CSS asset reference was missing from the deployed HTML."
             exit 1
