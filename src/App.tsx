@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronLeft, ChevronRight,
   Clock3, ExternalLink, FileText, LayoutDashboard, Link as LinkIcon, LockKeyhole, LogOut,
   BarChart3, Bell, BellRing, MessageCircle, NotebookPen, Plus, Repeat, Search, ShieldCheck, Sparkles, Target, Trash2, UserRound, Users, X,
+  Copy, Save, Share2, Bold, Italic, Underline, List, ListOrdered, AlignLeft, AlignCenter,
 } from 'lucide-react';
 import type { Session } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
@@ -11,7 +12,7 @@ type Role = 'manager' | 'managing_director';
 type Status = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'archived';
 type RepeatUnit = 'none' | 'daily' | 'weekly' | 'monthly';
 type Priority = 'low' | 'normal' | 'high' | 'urgent';
-type View = 'dashboard' | 'tasks' | 'calendar' | 'completed' | 'performance' | 'profile' | 'policies' | 'privacy';
+type View = 'dashboard' | 'tasks' | 'calendar' | 'completed' | 'performance' | 'profile' | 'templates' | 'policies' | 'privacy';
 type Profile = { id: string; full_name: string; role: Role; location?: string | null; experience?: string | null };
 type TeamMember = { id: string; full_name: string; job_title: string; location: string; sort_order: number; profile_id?: string | null };
 type CompanyNotice = { id: string; title: string; body: string; created_by: string; created_at: string; is_active: boolean; expires_at?: string | null };
@@ -30,6 +31,53 @@ type Task = {
 };
 type Comment = { id: string; task_id: string; author_id: string; body: string; created_at: string; author_name?: string };
 type Draft = { title: string; description: string; scheduled: string; deadline: string; priority: Priority; resource: string; assignee: string; repeatUnit: RepeatUnit; repeatEvery: number; repeatUntil: string; repeatMonthlyCount: RepeatMonthlyCount; repeatDayOne: number; repeatDayTwo: number; repeatDays: number[]; targetHours: string; startNow: boolean };
+type TemplateCategory = 'task' | 'notice' | 'invoice' | 'general';
+type WorkspaceTemplate = { id: string; title: string; category: TemplateCategory; body_html: string; is_shared?: boolean; created_by?: string; created_at?: string; updated_at?: string };
+const TEMPLATE_KEY = 'ediova-workspace-templates-v1';
+const BUILT_IN_TEMPLATES: WorkspaceTemplate[] = [
+  { id: 'builtin-video-brief', title: 'Video editing task brief', category: 'task', is_shared: true, created_by: 'builtin', body_html: '<h2>Video Editing Brief</h2><p><strong>Project:</strong> [Project / client name]</p><p><strong>Deliverables</strong></p><ul><li>Format and aspect ratio: [16:9 / 9:16 / 1:1]</li><li>Target duration: [duration]</li><li>Reference links: [paste links]</li><li>Brand assets: [folder link]</li></ul><p><strong>Style and direction</strong></p><p>[Pacing, captions, music, transitions, color, and other creative direction]</p><p><strong>Review notes:</strong> [revision requirements]</p><p><strong>Deadline:</strong> [date and time, Pakistan Standard Time]</p>' },
+  { id: 'builtin-thumbnail-brief', title: 'Thumbnail / cover design brief', category: 'task', is_shared: true, created_by: 'builtin', body_html: '<h2>Thumbnail / Cover Brief</h2><p><strong>Project:</strong> [Project name]</p><p><strong>Platform and size:</strong> [YouTube / Instagram / other]</p><p><strong>Main message:</strong> [headline or hook]</p><p><strong>Required elements</strong></p><ul><li>Subject / person: [details]</li><li>Brand colors and fonts: [details]</li><li>Images and references: [links]</li></ul><p><strong>Export:</strong> [file type and dimensions]</p><p><strong>Deadline:</strong> [date]</p>' },
+  { id: 'builtin-project-handoff', title: 'Project handoff checklist', category: 'task', is_shared: true, created_by: 'builtin', body_html: '<h2>Project Handoff</h2><p><strong>Project:</strong> [Project name]</p><ul><li>Final exports uploaded</li><li>Editable project files included</li><li>Fonts, assets, and linked media included</li><li>File names and versions checked</li><li>Quality check completed</li><li>Delivery links tested</li></ul><p><strong>Delivery folder:</strong> [link]</p><p><strong>Notes for the next owner:</strong> [notes]</p>' },
+  { id: 'builtin-team-notice', title: 'Team notice / announcement', category: 'notice', is_shared: true, created_by: 'builtin', body_html: '<h2>Team Announcement</h2><p>Hello team,</p><p>[Write the key update or announcement here.]</p><p><strong>What this means:</strong> [impact or next steps]</p><p><strong>Action required:</strong> [owner and deadline, if applicable]</p><p>Thank you,<br>Ediova Management</p>' },
+  { id: 'builtin-invoice', title: 'Video editing invoice', category: 'invoice', is_shared: true, created_by: 'builtin', body_html: '<h1>INVOICE</h1><p><strong>Invoice no.:</strong> EDI-[YYYY]-[###]<br><strong>Issue date:</strong> [date]<br><strong>Due date:</strong> [date]</p><hr><p><strong>From:</strong> Ediova<br><strong>Bill to:</strong> [Client / company]</p><table><thead><tr><th align="left">Description</th><th align="right">Qty</th><th align="right">Rate</th><th align="right">Amount</th></tr></thead><tbody><tr><td>[Editing / production service]</td><td>1</td><td>[Currency and amount]</td><td>[Currency and amount]</td></tr></tbody></table><p><strong>Subtotal:</strong> [amount]<br><strong>Tax / fees:</strong> [amount]<br><strong>Total due:</strong> [amount]</p><p><strong>Payment terms:</strong> [terms]<br><strong>Payment instructions:</strong> [details]</p><p>Thank you for working with Ediova.</p>' },
+  { id: 'builtin-payment-followup', title: 'Invoice payment follow-up', category: 'invoice', is_shared: true, created_by: 'builtin', body_html: '<h2>Invoice Follow-up</h2><p>Hi [Client name],</p><p>I hope you are well. This is a friendly follow-up regarding invoice <strong>[invoice number]</strong> for <strong>[amount]</strong>, due on <strong>[date]</strong>.</p><p>Please let us know if you need another copy or any clarification. Thank you for your continued partnership.</p><p>Best regards,<br>Ediova</p>' },
+];
+function isBuiltInTemplate(template: WorkspaceTemplate) { return template.id.startsWith('builtin-'); }
+function sanitizeTemplateHtml(html: string): string {
+  if (typeof DOMParser === 'undefined') return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/\son\w+\s*=\s*(['"]).*?\1/gi, '');
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const allowedTags = new Set(['P','BR','STRONG','B','EM','I','U','UL','OL','LI','H1','H2','H3','BLOCKQUOTE','SPAN','DIV','TABLE','THEAD','TBODY','TR','TH','TD','A','HR']);
+  const allowedStyles = new Set(['color','background-color','font-weight','font-style','text-decoration','text-align','font-size']);
+  const removeNodes = Array.from(parsed.body.querySelectorAll('script,style,iframe,object,embed,svg,math,form,input,button,video,audio,link,meta'));
+  removeNodes.forEach(node => node.remove());
+  Array.from(parsed.body.querySelectorAll('*')).forEach(node => {
+    if (!allowedTags.has(node.tagName)) {
+      const parent = node.parentNode;
+      if (parent) { while (node.firstChild) parent.insertBefore(node.firstChild, node); parent.removeChild(node); }
+      return;
+    }
+    Array.from(node.attributes).forEach(attr => {
+      if (attr.name === 'style') {
+        const rules = attr.value.split(';').map(rule => rule.trim()).filter(Boolean).map(rule => {
+          const split = rule.indexOf(':');
+          if (split < 0) return '';
+          const name = rule.slice(0, split).trim().toLowerCase();
+          const value = rule.slice(split + 1).trim();
+          if (!allowedStyles.has(name) || /url\s*\(|expression\s*\(|javascript:/i.test(value)) return '';
+          return name + ':' + value;
+        }).filter(Boolean);
+        if (rules.length) node.setAttribute('style', rules.join(';')); else node.removeAttribute('style');
+      } else if (node.tagName === 'A' && (attr.name === 'href' || attr.name === 'title')) {
+        if (attr.name === 'href' && !/^(https?:|mailto:)/i.test(attr.value)) node.removeAttribute(attr.name);
+      } else node.removeAttribute(attr.name);
+    });
+  });
+  return parsed.body.innerHTML;
+}
+function templatePlainText(html: string): string {
+  if (typeof DOMParser === 'undefined') return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return (new DOMParser().parseFromString(sanitizeTemplateHtml(html), 'text/html').body.textContent || '').replace(/\u00a0/g, ' ').trim();
+}
 
 const managerDemo: Profile = { id: 'demo-manager', full_name: 'Umna Haroon', role: 'manager', location: 'Islamabad, Pakistan', experience: '2+ years' };
 const directorDemo: Profile = { id: 'demo-director', full_name: 'Hamza Mubarak', role: 'managing_director', location: 'Yogyakarta, Indonesia' };
@@ -225,6 +273,17 @@ export default function App() {
   const [noteReminderDateDraft, setNoteReminderDateDraft] = useState('');
   const [reminderPopupOpen, setReminderPopupOpen] = useState(false);
   const [reminderPopupDismissedForDate, setReminderPopupDismissedForDate] = useState('');
+  const [templates, setTemplates] = useState<WorkspaceTemplate[]>(BUILT_IN_TEMPLATES);
+  const [templateSearch, setTemplateSearch] = useState('');
+  const [templateCategoryFilter, setTemplateCategoryFilter] = useState<'all' | TemplateCategory>('all');
+  const [templateSelectedId, setTemplateSelectedId] = useState('builtin-video-brief');
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [templateEditing, setTemplateEditing] = useState<WorkspaceTemplate | null>(null);
+  const [templateTitleDraft, setTemplateTitleDraft] = useState('');
+  const [templateCategoryDraft, setTemplateCategoryDraft] = useState<TemplateCategory>('task');
+  const [templateSharedDraft, setTemplateSharedDraft] = useState(true);
+  const [templateBodyDraft, setTemplateBodyDraft] = useState('');
+  const templateEditorRef = useRef<HTMLDivElement | null>(null);
 
   const role = profile?.role || 'manager';
   const director = role === 'managing_director';
@@ -294,6 +353,13 @@ export default function App() {
     if (directoryRows?.length) setTeamDirectory(directoryRows as TeamMember[]);
     const { data: noticeRows } = await supabase.from('company_notices').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1);
     setDashboardNotice((noticeRows?.[0] as CompanyNotice | undefined) || null);
+    const { data: templateRows, error: templateError } = await supabase.from('workspace_templates').select('*').order('updated_at', { ascending: false });
+    if (templateError) notify('Template library could not load: ' + templateError.message);
+    else {
+      const savedTemplates = (templateRows || []) as WorkspaceTemplate[];
+      setTemplates([...BUILT_IN_TEMPLATES, ...savedTemplates]);
+      setTemplateSelectedId(savedTemplates[0]?.id || BUILT_IN_TEMPLATES[0].id);
+    }
     const { data: rows, error: taskError } = await supabase.from('tasks').select('*').order('schedule_at', { ascending: true });
     if (taskError) notify('Workspace opened, but tasks could not load.');
     else setTasks((rows || []).map(row => fromDatabaseTask(row as unknown as Record<string, unknown>)));
@@ -323,6 +389,16 @@ export default function App() {
       try { localStorage.setItem(NOTES_KEY + ':' + profile.id, JSON.stringify(userNotes)); } catch { /* storage is optional */ }
     }
   }, [userNotes, profile?.id, preview]);
+  useEffect(() => {
+    if (preview && profile) {
+      try { localStorage.setItem(TEMPLATE_KEY + ':' + profile.id, JSON.stringify(templates)); } catch { /* storage is optional */ }
+    }
+  }, [templates, profile?.id, preview]);
+  useEffect(() => {
+    if (templateEditorOpen && templateEditorRef.current) {
+      templateEditorRef.current.innerHTML = sanitizeTemplateHtml(templateBodyDraft);
+    }
+  }, [templateEditorOpen, templateEditing?.id, templateTitleDraft, templateCategoryDraft]);
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentDateKey(todayKey()), 60000);
     return () => window.clearInterval(timer);
@@ -379,7 +455,7 @@ export default function App() {
     if (filter !== 'all') data = data.filter(t => effectiveStatus(t) === filter || t.priority === filter);
     return [...data].sort((a, b) => new Date(a.deadline_at).getTime() - new Date(b.deadline_at).getTime());
   }, [view, completed, activeThisMonth, selectedTaskDay, search, filter]);
-  const activeTask = released.find(t => t.id === activeTaskId) || null;
+  const activeTask = tasks.find(t => t.id === activeTaskId) || null;
   const todayTasks = active.filter(t => dayOffset(t.scheduled_at) <= 0).sort((a, b) => new Date(a.deadline_at).getTime() - new Date(b.deadline_at).getTime());
   const nav: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -388,6 +464,7 @@ export default function App() {
     { id: 'completed', label: 'Completed', icon: Check },
     { id: 'performance', label: 'Performance', icon: BarChart3 },
     { id: 'profile', label: 'Profile', icon: UserRound },
+    { id: 'templates', label: 'Templates', icon: NotebookPen },
   ];
 
   async function submitLogin(event: FormEvent) {
@@ -397,6 +474,8 @@ export default function App() {
       setLoginEmail(''); setLoginPassword('');
       setProfile(managerDemo);
       setUserNotes(safeRead(NOTES_KEY + ':' + managerDemo.id, () => []));
+      setTemplates(safeRead(TEMPLATE_KEY + ':' + managerDemo.id, () => BUILT_IN_TEMPLATES));
+      setTemplateSelectedId('builtin-video-brief');
       setReminderPopupDismissedForDate('');
       setScreen('workspace'); notify('Preview mode — changes stay in this browser only.'); return;
     }
@@ -412,6 +491,7 @@ export default function App() {
   }
   async function logout() {
     if (supabase && session) await supabase.auth.signOut();
+    setTemplateEditorOpen(false);
     setProfile(null); setSession(null); setUserNotes([]); setReminderPopupOpen(false); setReminderPopupDismissedForDate(''); setNotepadOpen(false); setActiveTaskId(null); setLoginEmail(''); setLoginPassword(''); setScreen('landing'); setView('dashboard');
   }
   function startCreate() {
@@ -507,6 +587,34 @@ export default function App() {
     notify(warning || (draft.startNow ? 'Task released and started immediately.' : editing ? 'Task updated.' : 'Task scheduled.'));
   }
 
+  async function dismantleSchedule(task: Task) {
+    if (!director || task.recurrence_parent_id || !task.repeat_unit || task.repeat_unit === 'none') return;
+    const confirmed = window.confirm('Stop this repeating schedule? Future, unfinished occurrences will be removed. Tasks already marked completed will be kept.');
+    if (!confirmed) return;
+    const nowIso = new Date().toISOString();
+    const stoppedFields: Partial<Task> = { repeat_unit: 'none', repeat_every: 1, repeat_until: null, repeat_weekdays: [], repeat_monthly_count: 1, repeat_day_one: null, repeat_day_two: null };
+    if (session && supabase && !task.id.startsWith('local-')) {
+      const { error: stopError } = await supabase.from('tasks').update(stoppedFields).eq('id', task.id);
+      if (stopError) { notify('The schedule could not be stopped: ' + stopError.message); return; }
+      const { error: deleteError } = await supabase.from('tasks').delete().eq('recurrence_parent_id', task.id).gt('schedule_at', nowIso).neq('status', 'completed');
+      if (deleteError) {
+        setTasks(prev => prev.map(item => item.id === task.id ? { ...item, ...stoppedFields, repeat_weekdays: [] } : item));
+        notify('The schedule is stopped, but some future occurrences could not be removed: ' + deleteError.message);
+        void refreshTasks();
+        return;
+      }
+    }
+    const now = Date.now();
+    setTasks(prev => prev.map(item => item.id === task.id ? { ...item, ...stoppedFields, repeat_weekdays: [] } : item).filter(item => !(item.recurrence_parent_id === task.id && item.status !== 'completed' && new Date(item.scheduled_at).getTime() > now)));
+    notify('Schedule dismantled. Completed tasks have been preserved.');
+  }
+
+  function startRepeatingTask(task: Task) {
+    startEdit(task);
+    const day = Number(keyFor(task.scheduled_at).split('-')[2]) || 1;
+    setDraft(current => ({ ...current, repeatUnit: 'monthly', repeatEvery: 1, repeatUntil: '', repeatMonthlyCount: 1, repeatDayOne: day }));
+  }
+
   async function startTaskNow(task: Task) {
     if (!director) { notify('Only the Managing Director can release a task immediately.'); return; }
     const now = new Date().toISOString();
@@ -565,12 +673,61 @@ export default function App() {
     }
     setCommentDraft('');
   }
-  function openTask(task: Task) { setActiveTaskId(task.id); void loadComments(task.id); }
+  function openTask(task: Task) { setActiveTaskId(task.id); if (director || new Date(task.scheduled_at).getTime() <= Date.now()) void loadComments(task.id); }
   function monthShift(direction: number) { setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + direction, 1)); }
   const monthTitle = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(calendarMonth);
   const firstOffset = (new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1).getDay() + 6) % 7;
   const monthDays = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
   const calendarCells = Array.from({ length: firstOffset + monthDays }, (_, i) => i < firstOffset ? 0 : i - firstOffset + 1);
+  const calendarEventsByDate = useMemo(() => {
+    const map: Record<string, { id: string; task: Task; isVirtual: boolean; scheduledAt: string }[]> = {};
+    const monthKey = calendarMonth.getFullYear() + '-' + String(calendarMonth.getMonth() + 1).padStart(2, '0');
+    const visibleTasks = tasks.filter(task => (director || task.assignee_id === profile?.id) && task.status !== 'cancelled' && task.status !== 'archived');
+    visibleTasks.filter(task => keyFor(task.scheduled_at).slice(0, 7) === monthKey).forEach(task => {
+      const key = keyFor(task.scheduled_at);
+      (map[key] ||= []).push({ id: task.id, task, isVirtual: false, scheduledAt: task.scheduled_at });
+    });
+    const dayNumber = (key: string) => {
+      const parts = key.split('-').map(Number);
+      return Math.floor(Date.UTC(parts[0], parts[1] - 1, parts[2]) / 86400000);
+    };
+    const anchorKeyFor = (date: Date) => date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+    const today = todayKey();
+    visibleTasks.filter(series => !series.recurrence_parent_id && Boolean(series.repeat_unit && series.repeat_unit !== 'none')).forEach(series => {
+      const startKey = keyFor(series.scheduled_at);
+      const endKey = series.repeat_until ? keyFor(series.repeat_until) : null;
+      const startDay = dayNumber(startKey);
+      const startParts = startKey.split('-').map(Number);
+      const startDate = new Date(Date.UTC(startParts[0], startParts[1] - 1, startParts[2]));
+      const mondayAnchor = startDay - ((startDate.getUTCDay() + 6) % 7);
+      const interval = Math.max(1, Number(series.repeat_every || 1));
+      const taskTime = inputInKarachi(series.scheduled_at).slice(11, 16) || '00:00';
+      const deadlineOffset = new Date(series.deadline_at).getTime() - new Date(series.scheduled_at).getTime();
+      for (let day = 1; day <= monthDays; day++) {
+        const key = anchorKeyFor(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day));
+        if (key <= startKey || key < today || (endKey && key > endKey)) continue;
+        const candidateDay = dayNumber(key);
+        let matches = false;
+        if (series.repeat_unit === 'daily') {
+          matches = (candidateDay - startDay) % interval === 0;
+        } else if (series.repeat_unit === 'weekly') {
+          const weekday = ((new Date(Date.UTC(calendarMonth.getFullYear(), calendarMonth.getMonth(), day)).getUTCDay() + 6) % 7) + 1;
+          const weekDelta = Math.floor((candidateDay - mondayAnchor) / 7);
+          const allowedWeekday = series.repeat_weekdays?.length ? series.repeat_weekdays.includes(weekday) : weekday === ((startDate.getUTCDay() + 6) % 7) + 1;
+          matches = weekDelta >= 0 && weekDelta % interval === 0 && allowedWeekday;
+        } else if (series.repeat_unit === 'monthly') {
+          const dayOfMonth = day;
+          matches = dayOfMonth === Number(series.repeat_day_one || startParts[2]) || (Number(series.repeat_monthly_count || 1) === 2 && dayOfMonth === Number(series.repeat_day_two || 0));
+        }
+        if (!matches || tasks.some(task => task.recurrence_parent_id === series.id && keyFor(task.scheduled_at) === key)) continue;
+        const scheduledAt = fromKarachiInput(key + 'T' + taskTime);
+        const virtualTask = { ...series, id: 'virtual-' + series.id + '-' + key, scheduled_at: scheduledAt, deadline_at: new Date(new Date(scheduledAt).getTime() + deadlineOffset).toISOString(), status: 'pending' as Status, completed_at: null, recurrence_parent_id: series.id };
+        (map[key] ||= []).push({ id: virtualTask.id, task: series, isVirtual: true, scheduledAt });
+      }
+    });
+    Object.values(map).forEach(items => items.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()));
+    return map;
+  }, [tasks, calendarMonth, currentDateKey, director, profile?.id]);
   const performanceCalendarFirstOffset = (new Date(performanceCalendarMonth.getFullYear(), performanceCalendarMonth.getMonth(), 1).getDay() + 6) % 7;
   const performanceCalendarDays = new Date(performanceCalendarMonth.getFullYear(), performanceCalendarMonth.getMonth() + 1, 0).getDate();
   const performanceCalendarCells = Array.from({ length: performanceCalendarFirstOffset + performanceCalendarDays }, (_, i) => i < performanceCalendarFirstOffset ? 0 : i - performanceCalendarFirstOffset + 1);
@@ -624,10 +781,90 @@ export default function App() {
   );
 
   const navViews = nav.concat([{ id: 'policies', label: 'Company policies', icon: FileText }, { id: 'privacy', label: 'Privacy & security', icon: ShieldCheck }]);
-  const viewTitle = ({ dashboard: 'Today', tasks: 'All tasks', calendar: 'Calendar', completed: 'Completed work', performance: 'Manager performance', profile: 'Your profile', policies: 'Company policies', privacy: 'Privacy & security' } as Record<View, string>)[view];
+  const viewTitle = ({ dashboard: 'Today', tasks: 'All tasks', calendar: 'Calendar', completed: 'Completed work', performance: 'Manager performance', profile: 'Your profile', templates: 'Templates', policies: 'Company policies', privacy: 'Privacy & security' } as Record<View, string>)[view];
+  const filteredTemplates = templates.filter(template => (templateCategoryFilter === 'all' || template.category === templateCategoryFilter) && (template.title + ' ' + template.category + ' ' + templatePlainText(template.body_html)).toLowerCase().includes(templateSearch.trim().toLowerCase()));
+  const selectedTemplate = filteredTemplates.find(template => template.id === templateSelectedId) || filteredTemplates[0] || null;
   const filteredComments = activeTask ? comments.filter(c => c.task_id === activeTask.id) : [];
   const managerId = team.find(p => p.role === 'manager')?.id || managerDemo.id;
   function openComposer() { if (!director) return; startCreate(); }
+  function startTemplateCreate(source?: WorkspaceTemplate) {
+    const canEditSource = Boolean(source && !isBuiltInTemplate(source) && source.created_by === profile?.id);
+    const chosen = source || null;
+    setTemplateEditing(canEditSource ? chosen : null);
+    setTemplateTitleDraft(chosen ? chosen.title + (canEditSource ? '' : ' — Copy') : '');
+    setTemplateCategoryDraft(chosen?.category || 'task');
+    setTemplateSharedDraft(chosen ? Boolean(chosen.is_shared) : true);
+    setTemplateBodyDraft(chosen ? chosen.body_html : '');
+    setTemplateEditorOpen(true);
+  }
+  async function saveTemplate(event: FormEvent) {
+    event.preventDefault();
+    if (!profile || !templateTitleDraft.trim()) { notify('Add a template title first.'); return; }
+    const body = sanitizeTemplateHtml(templateEditorRef.current?.innerHTML || templateBodyDraft).trim();
+    if (!templatePlainText(body)) { notify('Add some template content before saving.'); return; }
+    const payload = { title: templateTitleDraft.trim(), category: templateCategoryDraft, body_html: body, is_shared: templateSharedDraft, updated_at: new Date().toISOString() };
+    let saved: WorkspaceTemplate;
+    if (session && supabase) {
+      const result = templateEditing && !isBuiltInTemplate(templateEditing)
+        ? await supabase.from('workspace_templates').update(payload).eq('id', templateEditing.id).eq('created_by', profile.id).select('*').single()
+        : await supabase.from('workspace_templates').insert({ ...payload, created_by: profile.id }).select('*').single();
+      if (result.error || !result.data) { notify('Template could not be saved: ' + (result.error?.message || 'please try again')); return; }
+      saved = result.data as WorkspaceTemplate;
+    } else {
+      saved = { ...(templateEditing && !isBuiltInTemplate(templateEditing) ? templateEditing : {}), ...payload, id: templateEditing && !isBuiltInTemplate(templateEditing) ? templateEditing.id : 'local-template-' + Date.now(), created_by: profile.id, created_at: templateEditing?.created_at || new Date().toISOString() };
+    }
+    setTemplates(prev => templateEditing && !isBuiltInTemplate(templateEditing) ? prev.map(item => item.id === saved.id ? saved : item) : [saved, ...prev]);
+    setTemplateSelectedId(saved.id);
+    setTemplateEditorOpen(false);
+    notify(templateEditing && !isBuiltInTemplate(templateEditing) ? 'Template updated.' : 'Template saved to your library.');
+  }
+  async function deleteTemplate(template: WorkspaceTemplate) {
+    if (isBuiltInTemplate(template) || template.created_by !== profile?.id) return;
+    if (!window.confirm('Delete the template "' + template.title + '"? This will not affect tasks or invoices already created from it.')) return;
+    if (session && supabase) {
+      const { error } = await supabase.from('workspace_templates').delete().eq('id', template.id).eq('created_by', profile?.id);
+      if (error) { notify('Template could not be deleted: ' + error.message); return; }
+    }
+    const next = templates.filter(item => item.id !== template.id);
+    setTemplates(next);
+    setTemplateSelectedId(next[0]?.id || '');
+    setTemplateEditorOpen(false);
+    notify('Template deleted.');
+  }
+  async function copyTemplate(template: WorkspaceTemplate) {
+    const html = sanitizeTemplateHtml(template.body_html);
+    const plain = templatePlainText(html);
+    try {
+      if (navigator.clipboard && typeof ClipboardItem !== 'undefined' && 'write' in navigator.clipboard) {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([plain], { type: 'text/plain' }) })]);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(plain);
+      } else {
+        throw new Error('Clipboard access is unavailable in this browser.');
+      }
+      notify('Formatted template copied. Paste it into your document, email, or invoice editor.');
+    } catch {
+      notify('Clipboard access was blocked. Open the template and copy its content manually.');
+    }
+  }
+  function useTemplate(template: WorkspaceTemplate) {
+    const plain = templatePlainText(template.body_html);
+    if (template.category === 'task') {
+      if (!director) { void copyTemplate(template); return; }
+      setEditing(null);
+      setDraft({ ...defaultTaskDraft(), title: template.title, description: plain, assignee: team.find(p => p.role === 'manager')?.id || managerDemo.id });
+      setComposer(true);
+      notify('Task template loaded. Review the brief and schedule details.');
+      return;
+    }
+    if (template.category === 'notice' && director) {
+      setNoticeTitleDraft(template.title);
+      setNoticeBodyDraft(plain);
+      setNoticeComposer(true);
+      return;
+    }
+    void copyTemplate(template);
+  }
   async function publishDashboardNotice(event: FormEvent) {
     event.preventDefault();
     if (!director || !profile || !noticeTitleDraft.trim() || !noticeBodyDraft.trim()) return;
@@ -717,7 +954,7 @@ export default function App() {
   }
   return (
     <main className="workspace-shell">
-      <aside className="sidebar"><a className="brand side-brand" href="#" onClick={e => { e.preventDefault(); setScreen('landing'); }}><img src="./ediova-mark.svg" alt="" /><span>ediova<span className="brand-dot">.</span></span></a><div className="workspace-tag"><span className="status-led" />TEAM WORKSPACE</div><div className="side-section-label">WORKSPACE</div>{navViews.filter(item => ['dashboard', 'tasks', 'calendar', 'completed', 'performance', 'profile'].includes(item.id)).map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'nav-item current' : 'nav-item'} onClick={() => setView(item.id)}><Icon size={17} /><span>{item.label}</span>{item.id === 'tasks' && <small>{activeThisMonth.length}</small>}</button>; })}<div className="side-section-label side-spaced">COMPANY</div>{navViews.filter(item => item.id === 'policies' || item.id === 'privacy').map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'nav-item current' : 'nav-item'} onClick={() => setView(item.id)}><Icon size={17} /><span>{item.label}</span></button>; })}<div className="sidebar-bottom"><div className="sidebar-mini-card"><Sparkles size={16} /><strong>Make room<br />for good work.</strong><span>Clarity creates space.</span></div><button className="nav-item" onClick={() => void logout()}><LogOut size={17} /><span>Sign out</span></button><div className="sidebar-user"><div className="user-avatar">{(profile?.full_name || 'E').slice(0, 1)}</div><div><strong>{profile?.full_name || 'Ediova member'}</strong><small>{roleLabel(role)}</small></div><span className="online-dot" /></div></div></aside>
+      <aside className="sidebar"><a className="brand side-brand" href="#" onClick={e => { e.preventDefault(); setScreen('landing'); }}><img src="./ediova-mark.svg" alt="" /><span>ediova<span className="brand-dot">.</span></span></a><div className="workspace-tag"><span className="status-led" />TEAM WORKSPACE</div><div className="side-section-label">WORKSPACE</div>{navViews.filter(item => ['dashboard', 'tasks', 'calendar', 'completed', 'performance', 'profile', 'templates'].includes(item.id)).map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'nav-item current' : 'nav-item'} onClick={() => setView(item.id)}><Icon size={17} /><span>{item.label}</span>{item.id === 'tasks' && <small>{activeThisMonth.length}</small>}</button>; })}<div className="side-section-label side-spaced">COMPANY</div>{navViews.filter(item => item.id === 'policies' || item.id === 'privacy').map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'nav-item current' : 'nav-item'} onClick={() => setView(item.id)}><Icon size={17} /><span>{item.label}</span></button>; })}<div className="sidebar-bottom"><div className="sidebar-mini-card"><Sparkles size={16} /><strong>Make room<br />for good work.</strong><span>Clarity creates space.</span></div><button className="nav-item" onClick={() => void logout()}><LogOut size={17} /><span>Sign out</span></button><div className="sidebar-user"><div className="user-avatar">{(profile?.full_name || 'E').slice(0, 1)}</div><div><strong>{profile?.full_name || 'Ediova member'}</strong><small>{roleLabel(role)}</small></div><span className="online-dot" /></div></div></aside>
       <section className="workspace-main"><header className="workspace-topbar"><div><span className="workspace-crumb">EDI OVA <span>/</span> {viewTitle.toUpperCase()}</span><h1>{viewTitle}</h1></div><div className="topbar-right"><div className="today-date"><CalendarDays size={15} /><span>{longDate()}</span></div><button className="team-trigger" onClick={() => setTeamModal(true)}><Users size={15} /> Team <span>{teamDirectory.length}</span></button>{director && <><button className="button button-light notice-trigger" onClick={() => setNoticeComposer(true)}><Bell size={15} /> Post notice</button><button className="button button-dark" onClick={openComposer}><Plus size={17} /> New task</button></>}</div></header>
       {preview && <div className="preview-banner"><Sparkles size={16} /><span><strong>Preview mode</strong> — changes are saved in this browser only. Configure Supabase for shared accounts and cross-device persistence.</span></div>}
 
@@ -758,7 +995,7 @@ export default function App() {
         </div>
       </>}
       {activeTask && <div className="task-popover-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setActiveTaskId(null); }}>
-        <aside className="task-inspector task-dialog" role="dialog" aria-modal="true">{activeTask ? <><div className="inspector-top"><span className="eyebrow">TASK DETAILS</span><button className="icon-button" aria-label="Close details" onClick={() => setActiveTaskId(null)}><X size={17} /></button></div><h3 className="task-dialog-title">{activeTask.title}</h3><StatusPill value={effectiveStatus(activeTask)} /><p className="inspector-description">{activeTask.description || 'No description has been added.'}</p>{(activeTask.resource_urls?.length ? activeTask.resource_urls : activeTask.resource_url ? [activeTask.resource_url] : []).map((url, index) => <a className="resource-link" key={url + index} href={url} target="_blank" rel="noreferrer"><LinkIcon size={15} /> {resourceHostLabel(url)} <ExternalLink size={13} /></a>)}<div className="inspector-meta"><span><CalendarDays size={15} /> Release</span><strong>{dateLabel(activeTask.scheduled_at, true)}</strong><span><Clock3 size={15} /> Deadline</span><strong className={effectiveStatus(activeTask) === 'overdue' ? 'danger-text' : ''}>{dateLabel(activeTask.deadline_at, true)}</strong><span><Target size={15} /> Priority</span><strong>{priorityLabel(activeTask.priority)}</strong>{director && directorTaskHours[activeTask.id] != null && <><span><Clock3 size={15} /> Planned time</span><strong>{directorTaskHours[activeTask.id]} credited hours</strong></>}{activeTask.repeat_unit && activeTask.repeat_unit !== 'none' && <><span><Repeat size={15} /> Repeats</span><strong>{activeTask.repeat_unit === 'monthly' ? 'Monthly · day ' + (activeTask.repeat_day_one || keyFor(activeTask.scheduled_at).split('-')[2]) + ((activeTask.repeat_monthly_count || 1) === 2 ? ' & ' + activeTask.repeat_day_two : '') : 'Every ' + (activeTask.repeat_every || 1) + ' ' + (activeTask.repeat_unit === 'daily' ? 'day' : 'week') + ((activeTask.repeat_every || 1) > 1 ? 's' : '')}{activeTask.repeat_until ? ' · until ' + dateLabel(activeTask.repeat_until) : ' · ongoing'}</strong></>}</div>{activeTask.status !== 'completed' && activeTask.status !== 'cancelled' && <div className="inspector-actions">{director && activeTask.status !== 'in_progress' && <button className="button button-light" onClick={() => void startTaskNow(activeTask)}><Clock3 size={15} /> Start now</button>}{!director && activeTask.status !== 'in_progress' && <button className="button button-light" onClick={() => void setStatus(activeTask, 'in_progress')}>Start task</button>}<button className="button button-dark" onClick={() => void setStatus(activeTask, 'completed')}><Check size={15} /> Mark complete</button></div>}{director && activeTask.status === 'completed' && <div className="inspector-actions"><button className="button button-light" onClick={() => void setStatus(activeTask, 'in_progress')}><Repeat size={15} /> Reopen task</button></div>}{director && <div className="task-director-actions"><button className="edit-task-link" onClick={() => startEdit(activeTask)}>Edit task <ArrowRight size={14} /></button><button className="delete-task-link" onClick={() => setTaskPendingDelete(activeTask)}><X size={14} /> Delete task</button></div>}<div className="comments-heading"><MessageCircle size={16} /><strong>Team conversation</strong><span>{filteredComments.length}</span></div><div className="comment-list">{filteredComments.map(c => <div className="comment" key={c.id}><div className="comment-avatar">{(c.author_name || 'E').slice(0, 1)}</div><div><strong>{c.author_name || 'Ediova team'}</strong><small>{dateLabel(c.created_at, true)}</small><p>{c.body}</p></div></div>)}{filteredComments.length === 0 && <p className="muted-copy">No comments yet. Leave the first helpful note.</p>}</div><form className="comment-form" onSubmit={addComment}><input value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="Add a comment…" maxLength={4000} required /><button aria-label="Send comment"><ArrowRight size={16} /></button></form></> : <div className="inspector-empty"><div className="empty-icon"><MessageCircle size={22} /></div><h3>Select a task</h3><p>Open any task to view its brief, dates, resource links and team conversation.</p></div>}</aside>
+        <aside className="task-inspector task-dialog" role="dialog" aria-modal="true">{activeTask ? <><div className="inspector-top"><span className="eyebrow">TASK DETAILS</span><button className="icon-button" aria-label="Close details" onClick={() => setActiveTaskId(null)}><X size={17} /></button></div><h3 className="task-dialog-title">{activeTask.title}</h3><StatusPill value={effectiveStatus(activeTask)} /><p className="inspector-description">{activeTask.description || 'No description has been added.'}</p>{(activeTask.resource_urls?.length ? activeTask.resource_urls : activeTask.resource_url ? [activeTask.resource_url] : []).map((url, index) => <a className="resource-link" key={url + index} href={url} target="_blank" rel="noreferrer"><LinkIcon size={15} /> {resourceHostLabel(url)} <ExternalLink size={13} /></a>)}<div className="inspector-meta"><span><CalendarDays size={15} /> Release</span><strong>{dateLabel(activeTask.scheduled_at, true)}</strong><span><Clock3 size={15} /> Deadline</span><strong className={effectiveStatus(activeTask) === 'overdue' ? 'danger-text' : ''}>{dateLabel(activeTask.deadline_at, true)}</strong><span><Target size={15} /> Priority</span><strong>{priorityLabel(activeTask.priority)}</strong>{director && directorTaskHours[activeTask.id] != null && <><span><Clock3 size={15} /> Planned time</span><strong>{directorTaskHours[activeTask.id]} credited hours</strong></>}{activeTask.repeat_unit && activeTask.repeat_unit !== 'none' && <><span><Repeat size={15} /> Repeats</span><strong>{activeTask.repeat_unit === 'monthly' ? 'Monthly · day ' + (activeTask.repeat_day_one || keyFor(activeTask.scheduled_at).split('-')[2]) + ((activeTask.repeat_monthly_count || 1) === 2 ? ' & ' + activeTask.repeat_day_two : '') : 'Every ' + (activeTask.repeat_every || 1) + ' ' + (activeTask.repeat_unit === 'daily' ? 'day' : 'week') + ((activeTask.repeat_every || 1) > 1 ? 's' : '')}{activeTask.repeat_until ? ' · until ' + dateLabel(activeTask.repeat_until) : ' · ongoing'}</strong></>}</div>{(director || new Date(activeTask.scheduled_at).getTime() <= Date.now()) && activeTask.status !== 'completed' && activeTask.status !== 'cancelled' && <div className="inspector-actions">{director && activeTask.status !== 'in_progress' && <button className="button button-light" onClick={() => void startTaskNow(activeTask)}><Clock3 size={15} /> Start now</button>}{!director && activeTask.status !== 'in_progress' && <button className="button button-light" onClick={() => void setStatus(activeTask, 'in_progress')}>Start task</button>}<button className="button button-dark" onClick={() => void setStatus(activeTask, 'completed')}><Check size={15} /> Mark complete</button></div>}{director && activeTask.status === 'completed' && <div className="inspector-actions"><button className="button button-light" onClick={() => void setStatus(activeTask, 'in_progress')}><Repeat size={15} /> Reopen task</button></div>}{director && <div className="task-director-actions">{!activeTask.recurrence_parent_id && (!activeTask.repeat_unit || activeTask.repeat_unit === 'none') && activeTask.status !== 'cancelled' && activeTask.status !== 'archived' && <button className="edit-task-link repeat-task-action" onClick={() => startRepeatingTask(activeTask)}><Repeat size={14} /> Make repetitive</button>}<button className="edit-task-link" onClick={() => startEdit(activeTask)}>Edit task <ArrowRight size={14} /></button><button className="delete-task-link" onClick={() => setTaskPendingDelete(activeTask)}><X size={14} /> Delete task</button></div>}{director && activeTask.repeat_unit && activeTask.repeat_unit !== 'none' && !activeTask.recurrence_parent_id && <button className="button button-light schedule-stop-button" onClick={() => void dismantleSchedule(activeTask)}><X size={15} /> Dismantle schedule</button>}<div className="comments-heading"><MessageCircle size={16} /><strong>Team conversation</strong><span>{filteredComments.length}</span></div><div className="comment-list">{filteredComments.map(c => <div className="comment" key={c.id}><div className="comment-avatar">{(c.author_name || 'E').slice(0, 1)}</div><div><strong>{c.author_name || 'Ediova team'}</strong><small>{dateLabel(c.created_at, true)}</small><p>{c.body}</p></div></div>)}{filteredComments.length === 0 && <p className="muted-copy">No comments yet. Leave the first helpful note.</p>}</div><form className="comment-form" onSubmit={addComment}><input value={commentDraft} onChange={e => setCommentDraft(e.target.value)} placeholder="Add a comment…" maxLength={4000} required /><button aria-label="Send comment"><ArrowRight size={16} /></button></form></> : <div className="inspector-empty"><div className="empty-icon"><MessageCircle size={22} /></div><h3>Select a task</h3><p>Open any task to view its brief, dates, resource links and team conversation.</p></div>}</aside>
       </div>}
       {view === 'performance' && <section className="performance-page">
         <div className="performance-heading"><span className="eyebrow">PROGRESS, MADE VISIBLE</span><h2>{director ? 'Manager performance.' : 'Your performance.'}</h2><p>Monthly task completions and credited hours update automatically when completed work is recorded. The Manager sees monthly totals only; task-level hour targets remain private to the Managing Director.</p></div>
@@ -791,7 +1028,47 @@ export default function App() {
           </article>;
         })}{performanceRows.filter(row => director || row.manager_id === profile?.id).length === 0 && <div className="empty-state"><h3>Performance data is loading.</h3><p>Assign tasks and record completions to build the score.</p></div>}</div>
       </section>}
-      {view === 'calendar' && <section className="calendar-panel"><div className="calendar-heading"><div><span className="eyebrow">MAKE TIME FOR THE WORK</span><h2>{monthTitle}</h2></div><div className="calendar-paging"><button className="icon-button" onClick={() => monthShift(-1)} aria-label="Previous month"><ChevronLeft /></button><button className="icon-button" onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>Today</button><button className="icon-button" onClick={() => monthShift(1)} aria-label="Next month"><ChevronRight /></button></div></div><div className="calendar-week">{['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map(d => <span key={d}>{d}</span>)}</div><div className="calendar-grid">{calendarCells.map((day, i) => { const key = day ? calendarMonth.getFullYear() + '-' + String(calendarMonth.getMonth() + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0') : 'blank-' + i; const items = day ? released.filter(t => keyFor(t.scheduled_at) === key && t.status !== 'cancelled' && t.status !== 'archived') : []; return <div className={'calendar-day' + (!day ? ' blank' : '') + (day && key === todayKey() ? ' is-today' : '')} key={key}><span className="calendar-day-num">{day || ''}</span>{items.slice(0, 3).map(t => <button key={t.id} className={'calendar-event ' + (effectiveStatus(t) === 'overdue' ? 'event-late' : 'event-' + t.status)} onClick={() => { setView('dashboard'); openTask(t); }} title={t.title}>{t.title}</button>)}{items.length > 3 && <small>+{items.length - 3} more</small>}</div>; })}</div></section>}
+      {view === 'calendar' && <section className="calendar-panel"><div className="calendar-heading"><div><span className="eyebrow">MAKE TIME FOR THE WORK</span><h2>{monthTitle}</h2></div><div className="calendar-paging"><button className="icon-button" onClick={() => monthShift(-1)} aria-label="Previous month"><ChevronLeft /></button><button className="icon-button" onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>Today</button><button className="icon-button" onClick={() => monthShift(1)} aria-label="Next month"><ChevronRight /></button></div></div><div className="calendar-week">{['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map(d => <span key={d}>{d}</span>)}</div><div className="calendar-grid">{calendarCells.map((day, i) => { const key = day ? calendarMonth.getFullYear() + '-' + String(calendarMonth.getMonth() + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0') : 'blank-' + i; const items = day ? (calendarEventsByDate[key] || []) : []; return <div className={'calendar-day' + (!day ? ' blank' : '') + (day && key === todayKey() ? ' is-today' : '')} key={key}><span className="calendar-day-num">{day || ''}</span>{items.slice(0, 3).map(item => <button key={item.id} className={'calendar-event ' + (item.isVirtual ? 'event-pending event-series-preview' : effectiveStatus(item.task) === 'overdue' ? 'event-late' : 'event-' + item.task.status)} onClick={() => openTask(item.task)} title={item.isVirtual ? item.task.title + ' · repeating schedule' : item.task.title}>{item.task.title}{item.isVirtual ? ' ↻' : ''}</button>)}{items.length > 3 && <small>+{items.length - 3} more</small>}</div>; })}</div></section>}
+      {view === 'templates' && <section className="template-library">
+        <div className="template-library-heading"><div><span className="eyebrow">READY-MADE WORKFLOWS</span><h2>Templates, ready to use.</h2><p>Search task briefs, team notices, and invoices. Edit your own templates in the notepad or copy formatted content into the document you are working on.</p></div><button className="button button-dark" onClick={() => startTemplateCreate()}><Plus size={16} /> New template</button></div>
+        <div className="template-workbench">
+          <aside className="template-sidebar">
+            <div className="template-search-box"><Search size={16} /><input value={templateSearch} onChange={e => setTemplateSearch(e.target.value)} placeholder="Search templates..." aria-label="Search templates" /></div>
+            <div className="template-category-tabs">{([{id:'all',label:'All'},{id:'task',label:'Tasks'},{id:'notice',label:'Notices'},{id:'invoice',label:'Invoices'},{id:'general',label:'General'}] as {id:'all' | TemplateCategory; label:string}[]).map(item => <button key={item.id} className={templateCategoryFilter === item.id ? 'current' : ''} onClick={() => setTemplateCategoryFilter(item.id)}>{item.label}</button>)}</div>
+            <div className="template-result-count">{filteredTemplates.length} {filteredTemplates.length === 1 ? 'template' : 'templates'}</div>
+            <div className="template-result-list">{filteredTemplates.map(template => <button key={template.id} className={'template-result' + (selectedTemplate?.id === template.id ? ' selected' : '')} onClick={() => { setTemplateSelectedId(template.id); setTemplateEditorOpen(false); }}><span className={'template-type-mark type-' + template.category}>{template.category === 'task' ? <Target size={15} /> : template.category === 'notice' ? <Bell size={15} /> : template.category === 'invoice' ? <FileText size={15} /> : <NotebookPen size={15} />}</span><span className="template-result-text"><strong>{template.title}</strong><small>{template.category[0].toUpperCase() + template.category.slice(1)} · {isBuiltInTemplate(template) ? 'Ediova starter' : template.is_shared ? 'Shared with team' : 'Private template'}</small></span></button>)}
+              {filteredTemplates.length === 0 && <div className="template-empty-list"><Search size={20} /><strong>No matching templates</strong><span>Try a different phrase or category.</span></div>}
+            </div>
+          </aside>
+          <section className="template-paper-area">
+            {templateEditorOpen ? <form className="template-editor-card" onSubmit={saveTemplate}>
+              <div className="template-editor-top"><div><span className="eyebrow">{templateEditing ? 'YOUR TEMPLATE' : 'NEW LIBRARY ITEM'}</span><h3>{templateEditing ? 'Edit template' : 'Create a template'}</h3></div><button type="button" className="icon-button" onClick={() => setTemplateEditorOpen(false)} aria-label="Close editor"><X size={17} /></button></div>
+              <div className="template-editor-meta"><label>Template name<input required maxLength={120} value={templateTitleDraft} onChange={e => setTemplateTitleDraft(e.target.value)} placeholder="Name this template" /></label><label>Category<select value={templateCategoryDraft} onChange={e => setTemplateCategoryDraft(e.target.value as TemplateCategory)}><option value="task">Task brief</option><option value="notice">Notice</option><option value="invoice">Invoice</option><option value="general">General</option></select></label></div>
+              <div className="template-share-row"><label><input type="checkbox" checked={templateSharedDraft} onChange={e => setTemplateSharedDraft(e.target.checked)} /> Share with the team</label><span>{templateSharedDraft ? <><Share2 size={13} /> Visible to everyone in Ediova</> : 'Only visible to you'}</span></div>
+              <div className="template-format-toolbar" aria-label="Text formatting toolbar">
+                <button type="button" title="Bold" onMouseDown={e => e.preventDefault()} onClick={() => { templateEditorRef.current?.focus(); document.execCommand('bold'); }}><Bold size={15} /></button>
+                <button type="button" title="Italic" onMouseDown={e => e.preventDefault()} onClick={() => { templateEditorRef.current?.focus(); document.execCommand('italic'); }}><Italic size={15} /></button>
+                <button type="button" title="Underline" onMouseDown={e => e.preventDefault()} onClick={() => { templateEditorRef.current?.focus(); document.execCommand('underline'); }}><Underline size={15} /></button>
+                <span />
+                <button type="button" title="Bulleted list" onMouseDown={e => e.preventDefault()} onClick={() => { templateEditorRef.current?.focus(); document.execCommand('insertUnorderedList'); }}><List size={15} /></button>
+                <button type="button" title="Numbered list" onMouseDown={e => e.preventDefault()} onClick={() => { templateEditorRef.current?.focus(); document.execCommand('insertOrderedList'); }}><ListOrdered size={15} /></button>
+                <span />
+                <button type="button" title="Align left" onMouseDown={e => e.preventDefault()} onClick={() => { templateEditorRef.current?.focus(); document.execCommand('justifyLeft'); }}><AlignLeft size={15} /></button>
+                <button type="button" title="Align center" onMouseDown={e => e.preventDefault()} onClick={() => { templateEditorRef.current?.focus(); document.execCommand('justifyCenter'); }}><AlignCenter size={15} /></button>
+                <label className="template-color-control" title="Text color">A<input type="color" onChange={e => { templateEditorRef.current?.focus(); document.execCommand('foreColor', false, e.target.value); }} aria-label="Text color" /></label>
+              </div>
+              <div ref={templateEditorRef} className="template-rich-editor" contentEditable suppressContentEditableWarning onInput={e => setTemplateBodyDraft(sanitizeTemplateHtml(e.currentTarget.innerHTML))} data-placeholder="Write your template here. Paste formatted content, tables, headings, and lists..." role="textbox" aria-label="Template content editor" aria-multiline="true" />
+              <div className="template-editor-footer"><span>Rich text · headings · lists · tables · colors</span><div><button type="button" className="button button-light" onClick={() => setTemplateEditorOpen(false)}>Cancel</button><button type="submit" className="button button-dark"><Save size={15} /> Save template</button></div></div>
+            </form> : selectedTemplate ? <article className="template-document-card">
+              <div className="template-document-toolbar"><span className={'template-type-mark type-' + selectedTemplate.category}>{selectedTemplate.category === 'task' ? <Target size={15} /> : selectedTemplate.category === 'notice' ? <Bell size={15} /> : selectedTemplate.category === 'invoice' ? <FileText size={15} /> : <NotebookPen size={15} />}</span><span className="template-document-category">{selectedTemplate.category.toUpperCase()} TEMPLATE</span><div className="template-toolbar-spacer" /><button className="icon-button" title="Copy formatted content" onClick={() => void copyTemplate(selectedTemplate)}><Copy size={15} /></button>{!isBuiltInTemplate(selectedTemplate) && selectedTemplate.created_by === profile?.id && <button className="icon-button" title="Delete template" onClick={() => void deleteTemplate(selectedTemplate)}><Trash2 size={15} /></button>}</div>
+              <header className="template-document-title"><span className="eyebrow">{isBuiltInTemplate(selectedTemplate) ? 'EDI OVA STARTER' : selectedTemplate.is_shared ? 'SHARED WORKSPACE TEMPLATE' : 'YOUR PRIVATE TEMPLATE'}</span><h3>{selectedTemplate.title}</h3><p>Formatted working copy · paste-ready</p></header>
+              <div className="template-document-content" dangerouslySetInnerHTML={{ __html: sanitizeTemplateHtml(selectedTemplate.body_html) }} />
+              <div className="template-document-actions"><button className="button button-light" onClick={() => startTemplateCreate(selectedTemplate)}>{!isBuiltInTemplate(selectedTemplate) && selectedTemplate.created_by === profile?.id ? 'Edit template' : 'Customize a copy'}</button><button className="button button-dark" onClick={() => useTemplate(selectedTemplate)}>{selectedTemplate.category === 'task' && director ? <Plus size={15} /> : selectedTemplate.category === 'notice' && director ? <Bell size={15} /> : <Copy size={15} />}{selectedTemplate.category === 'task' && director ? ' Create task from template' : selectedTemplate.category === 'notice' && director ? ' Prepare notice' : ' Copy / use template'}</button></div>
+              <p className="template-access-note">Your edits are saved to the workspace library. Starter templates remain unchanged; customize a copy to build your own version.</p>
+            </article> : <div className="template-empty-paper"><NotebookPen size={25} /><h3>Choose a template</h3><p>Select a template on the left or create a new one.</p></div>}
+          </section>
+        </div>
+      </section>}
       {view === 'profile' && <section className="profile-page"><div className="profile-copy"><span className="eyebrow">THE PERSON BEHIND THE WORK</span><h2>Your profile,<br /><em>your place here.</em></h2><p>Clear ownership and thoughtful communication help good work move forward.</p><div className="profile-details"><span>NAME</span><strong>{profile?.full_name || 'Preview member'}</strong><span>ROLE</span><strong>{roleLabel(role)}</strong><span>LOCATION</span><strong>{profile?.location || (role === 'manager' ? 'Islamabad, Pakistan' : 'Ediova')}</strong><span>EXPERIENCE</span><strong>{profile?.experience || (role === 'manager' ? '2+ years' : 'Leadership')}</strong></div></div><button className={'profile-flip' + (flip ? ' flipped' : '')} onClick={() => setFlip(!flip)} aria-label="Flip profile card"><div className="flip-inner"><div className="flip-front"><span className="float-index">EDI OVA / TEAM CARD</span><div className="profile-symbol">{(profile?.full_name || 'E').slice(0, 1)}</div><h3>{profile?.full_name || 'Ediova member'}</h3><p>{roleLabel(role)}</p><div className="flip-hint">CLICK TO FLIP <ArrowRight size={13} /></div></div><div className="flip-back"><ShieldCheck size={33} /><span className="eyebrow">ACCESS VERIFIED</span><h3>{director ? 'DIRECTOR-LEVEL ACCESS' : 'MANAGER-LEVEL ACCESS'}</h3><p>Role permissions are enforced by your signed-in account and database policies.</p><span className="flip-hint">CLICK TO RETURN</span></div></div></button></section>}
       {view === 'policies' && <InfoPage icon={<FileText size={22} />} eyebrow="HOW WE WORK" title="Company policies." body="We work with care, own our commitments and keep communication useful. Each task should have a clear brief, a realistic deadline and one obvious place for updates. Respect agreed schedules, protect client material, use approved links, and flag blockers early rather than silently missing a deadline." list={['Treat client and company information as confidential.','Keep task comments professional, clear and constructive.','Only share deliverables through approved resources and channels.','Raise timeline risks as soon as you see them.']} />}
       {view === 'privacy' && <InfoPage icon={<ShieldCheck size={22} />} eyebrow="PRIVACY & SECURITY" title="Work stays in the right hands." body="This workspace is intended for authorised Ediova team members. In production, authentication and database access are provided by Supabase with row-level security. Preview mode stores sample task data only in the current browser and does not synchronise it to other people." list={['Do not place passwords, payment details or unnecessary personal data in task comments.','Use individual accounts and never share login credentials.','Managers see assigned tasks only after their scheduled release time.','This draft notice must be reviewed against the final hosting, data retention and business practices before launch.']} />}
@@ -830,8 +1107,8 @@ export default function App() {
               <label>Repeat interval<select value={String(draft.repeatEvery)} onChange={e => setDraft({ ...draft, repeatEvery: Number(e.target.value) })}><option value="1">Every week</option><option value="2">Every 2 weeks</option></select></label>
               <div className="repeat-weekdays"><span className="optional-label">SHOW THIS TASK ON</span><div className="weekday-options">{[{day:1,label:'Mon'},{day:2,label:'Tue'},{day:3,label:'Wed'},{day:4,label:'Thu'},{day:5,label:'Fri'},{day:6,label:'Sat'},{day:7,label:'Sun'}].map(item => <label className="weekday-option" key={item.day}><input type="checkbox" checked={draft.repeatDays.includes(item.day)} onChange={e => setDraft({ ...draft, repeatDays: e.target.checked ? [...draft.repeatDays, item.day].sort((a,b) => a-b) : draft.repeatDays.filter(day => day !== item.day) })} /><span>{item.label}</span></label>)}</div></div>
             </> : draft.repeatUnit === 'daily' && <label>Repeat every <span className="optional-label">INTERVAL · DAYS</span><input type="number" min={1} max={365} step={1} required value={draft.repeatEvery} onChange={e => setDraft({ ...draft, repeatEvery: Math.max(1, Math.min(365, Number(e.target.value) || 1)) })} /></label>}
-            {draft.repeatUnit !== 'none' && <label className="repeat-until-field">Repeat until <span className="optional-label">OPTIONAL</span><input type="date" value={draft.repeatUntil.slice(0,10)} onChange={e => setDraft({ ...draft, repeatUntil: e.target.value ? e.target.value + 'T23:59' : '' })} min={draft.scheduled.slice(0,10)} /></label>}
-            {draft.repeatUnit !== 'none' && <p className="recurrence-note">{draft.repeatUnit === 'weekly' ? 'Select one or more weekdays. The first task is aligned to the next selected day; repeats default to 12:00 AM Pakistan time.' : 'Repeat occurrences preserve the task time and deadline window. Managers see each occurrence after its release time.'} {draft.repeatUntil ? 'This series ends on the selected date.' : 'No end date is set, so this series repeats indefinitely.'} Occurrences are generated within the current calendar month and roll forward when the next month begins.</p>}
+            {draft.repeatUnit !== 'none' && <label className="repeat-until-field">End date <span className="optional-label">OPTIONAL · LEAVE BLANK FOR NO END DATE</span><input type="date" value={draft.repeatUntil.slice(0,10)} onChange={e => setDraft({ ...draft, repeatUntil: e.target.value ? e.target.value + 'T23:59' : '' })} min={draft.scheduled.slice(0,10)} /></label>}
+            {draft.repeatUnit !== 'none' && <p className="recurrence-note">{draft.repeatUnit === 'weekly' ? 'Select one or more weekdays. The first task is aligned to the next selected day; repeats default to 12:00 AM Pakistan time.' : 'Repeat occurrences preserve the task time and deadline window.'} {draft.repeatUntil ? 'This series ends on the selected date.' : 'No end date is set, so this series repeats indefinitely.'} Future dates appear in Calendar as you navigate ahead; each occurrence becomes a regular task as its month arrives.</p>}
           </div>}
           <div className="modal-actions"><button type="button" className="button button-light" onClick={() => setComposer(false)}>Cancel</button><button className="button button-dark"><Check size={16} /> {editing ? 'Save changes' : 'Schedule task'}</button></div><p className="form-time-note">All times are interpreted as Pakistan Standard Time (UTC+05:00). Use Start now to release the task immediately and place it in today’s workspace.</p></form></div>}
       {taskPendingDelete && <div className="confirm-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setTaskPendingDelete(null); }}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-task-title"><span className="eyebrow">MANAGING DIRECTOR ACTION</span><h2 id="delete-task-title">Delete this task?</h2><p><strong>{taskPendingDelete.title}</strong> will be permanently removed, including its comments, task history, recurrence instances and private hour assignment. This cannot be undone.</p><div className="confirm-actions"><button type="button" className="button button-light" onClick={() => setTaskPendingDelete(null)}>Keep task</button><button type="button" className="button button-danger" onClick={() => void deleteTask(taskPendingDelete)}>Delete permanently</button></div></section></div>}
