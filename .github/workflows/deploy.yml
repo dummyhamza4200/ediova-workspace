@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   pages: write
+  actions: read
   id-token: write
 
 concurrency:
@@ -56,6 +57,35 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Wait for GitHub's automatic branch-based Pages build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          api_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs?branch=${GITHUB_REF_NAME}&per_page=50"
+          for attempt in $(seq 1 36); do
+            runs="$(curl --silent --show-error --fail \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "${api_url}")"
+            status="$(printf '%s' "${runs}" | jq -r --arg sha "${GITHUB_SHA}" \
+              '[.workflow_runs[] | select(.name == "pages build and deployment" and .head_sha == $sha) | .status][0] // empty')"
+            if [ -z "${status}" ]; then
+              echo "No competing branch-based Pages build was found for this commit."
+              break
+            fi
+            if [ "${status}" = "completed" ]; then
+              echo "The automatic branch-based build has finished; the Vite artifact will now be published last."
+              break
+            fi
+            echo "Automatic Pages build is ${status}; waiting before publishing the Vite artifact (attempt ${attempt}/36)."
+            if [ "${attempt}" -eq 36 ]; then
+              echo "Timed out waiting for GitHub's competing branch-based Pages deployment."
+              exit 1
+            fi
+            sleep 5
+          done
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
@@ -129,7 +159,7 @@ jobs:
             await page.waitForFunction(() => {
               const root = document.querySelector('#root');
               return Boolean(root && root.childElementCount > 0 && root.innerText.trim().length > 10);
-            }, { timeout: 20000 });
+            }, null, { timeout: 20000 });
 
             const bodyText = await page.locator('#root').innerText();
             console.log('Rendered page title:', await page.title());
