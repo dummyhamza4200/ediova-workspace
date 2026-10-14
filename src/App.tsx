@@ -592,7 +592,7 @@ export default function App() {
     const confirmed = window.confirm('Stop this repeating schedule? Future, unfinished occurrences will be removed. Tasks already marked completed will be kept.');
     if (!confirmed) return;
     const nowIso = new Date().toISOString();
-    const stoppedFields = { repeat_unit: 'none', repeat_every: 1, repeat_until: null, repeat_weekdays: [], repeat_monthly_count: 1, repeat_day_one: null, repeat_day_two: null };
+    const stoppedFields: Partial<Task> = { repeat_unit: 'none', repeat_every: 1, repeat_until: null, repeat_weekdays: [], repeat_monthly_count: 1, repeat_day_one: null, repeat_day_two: null };
     if (session && supabase && !task.id.startsWith('local-')) {
       const { error: stopError } = await supabase.from('tasks').update(stoppedFields).eq('id', task.id);
       if (stopError) { notify('The schedule could not be stopped: ' + stopError.message); return; }
@@ -713,7 +713,8 @@ export default function App() {
         } else if (series.repeat_unit === 'weekly') {
           const weekday = ((new Date(Date.UTC(calendarMonth.getFullYear(), calendarMonth.getMonth(), day)).getUTCDay() + 6) % 7) + 1;
           const weekDelta = Math.floor((candidateDay - mondayAnchor) / 7);
-          matches = weekDelta >= 0 && weekDelta % interval === 0 && Boolean(series.repeat_weekdays?.includes(weekday));
+          const allowedWeekday = series.repeat_weekdays?.length ? series.repeat_weekdays.includes(weekday) : weekday === ((startDate.getUTCDay() + 6) % 7) + 1;
+          matches = weekDelta >= 0 && weekDelta % interval === 0 && allowedWeekday;
         } else if (series.repeat_unit === 'monthly') {
           const dayOfMonth = day;
           matches = dayOfMonth === Number(series.repeat_day_one || startParts[2]) || (Number(series.repeat_monthly_count || 1) === 2 && dayOfMonth === Number(series.repeat_day_two || 0));
